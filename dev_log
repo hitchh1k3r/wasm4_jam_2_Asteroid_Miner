@@ -1,3 +1,6 @@
 2022-08-13
   - With just `start` and `update` stub functions cart is 709 bytes
   - Adding WASM-4 interface (note linking with `strip-all`) and drawing "hello world" makes it 775 bytes
+  - Global variables inflate the cart size, we can avoid that by explicitly laying out the memory, and creating raw pointers
+  - Doing math on an array (normally does SIMD, but that's not supported in WASM) seems to fallback to an unroll for loop (which uses a lot of cart space), we can write the loop ourselves to save space
+  - I halved the stack from 14752 to 7376, hopefully this wont cause issues, if I need more space the stack will start running into the bottom ofthe frame buffer and corruption can be seen at the bottom of the screen
