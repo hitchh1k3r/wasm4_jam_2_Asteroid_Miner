@@ -36,6 +36,14 @@ SystemFlag :: enum u8 {
   HideGamepadOverlay  = 1,
 }
 
+NetPlay :: enum u8 {
+  Offline = 0b000,
+  Player1 = 0b100,
+  Player2 = 0b101,
+  Player3 = 0b110,
+  Player4 = 0b111,
+}
+
 PALLET        := (^Palette)(uintptr(0x04))
 DRAW_COLORS   := (^u16)(uintptr(0x14))
 GAMEPAD1      := (^ButtonSet)(uintptr(0x16))
@@ -46,7 +54,7 @@ MOUSE_X       := (^i16)(uintptr(0x1a))
 MOUSE_Y       := (^i16)(uintptr(0x1c))
 MOUSE_BUTTONS := (^MouseButtonSet)(uintptr(0x1e))
 SYSTEM_FLAGS  := (^SystemFlagSet)(uintptr(0x1f))
-NETPLAY       := (^u8)(uintptr(0x20))
+NETPLAY       := (^NetPlay)(uintptr(0x20))
 FRAMEBUFFER   := (^[6400]u8)(uintptr(0xa0))
 
 // Drawing Functions ///////////////////////////////////////////////////////////////////////////////
