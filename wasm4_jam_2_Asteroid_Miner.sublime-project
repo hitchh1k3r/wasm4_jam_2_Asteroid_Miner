@@ -1,0 +1,17 @@
+{
+  "build_systems":
+  [
+    {
+      "cmd": "build.bat",
+      "file_regex": "^(C:.*\\.odin)\\((\\d+):(\\d+)\\)\\s(.*)$",
+      "name": "Build",
+      "working_dir": "$project_path/",
+    },
+  ],
+  "folders":
+  [
+    {
+      "path": ".",
+    }
+  ],
+}
