@@ -9,11 +9,15 @@ V2 :: glm.vec2
 V3 :: glm.vec3
 V4 :: glm.vec4
 
+V2_ZERO    :: V2{  0,  0 }
+V2_ONE     :: V2{  1,  1 }
 V2_UP      :: V2{  0,  1 }
 V2_DOWN    :: V2{  0, -1 }
 V2_RIGHT   :: V2{  1,  0 }
 V2_LEFT    :: V2{ -1,  0 }
 
+V3_ZERO    :: V3{  0,  0,  0 }
+V3_ONE     :: V3{  1,  1,  1 }
 V3_UP      :: V3{  0,  1,  0 }
 V3_DOWN    :: V3{  0, -1,  0 }
 V3_RIGHT   :: V3{  1,  0,  0 }
@@ -117,4 +121,41 @@ sin :: proc(angle : f32, is_cos := false) -> f32 {
 
 cos :: proc(angle : f32) -> f32 {
   return sin(angle + 0.25*math.TAU, true)
+}
+
+quatAxisAngle :: proc(axis : V3, radians : f32) -> (q : glm.quat) {
+  t := radians*0.5
+  v := glm.normalize(axis) * sin(t)
+  q.x = v.x
+  q.y = v.y
+  q.z = v.z
+  q.w = cos(t)
+  return
+}
+
+mat4Rotate :: proc(v: glm.vec3, radians: f32) -> (rot: glm.mat4) {
+  c := f32(cos(radians))
+  s := f32(sin(radians))
+
+  a := glm.normalize(v)
+  t := a * (1-c)
+
+  rot = 1
+
+  rot[0, 0] = c + t[0]*a[0]
+  rot[1, 0] = 0 + t[0]*a[1] + s*a[2]
+  rot[2, 0] = 0 + t[0]*a[2] - s*a[1]
+  rot[3, 0] = 0
+
+  rot[0, 1] = 0 + t[1]*a[0] - s*a[2]
+  rot[1, 1] = c + t[1]*a[1]
+  rot[2, 1] = 0 + t[1]*a[2] + s*a[0]
+  rot[3, 1] = 0
+
+  rot[0, 2] = 0 + t[2]*a[0] + s*a[1]
+  rot[1, 2] = 0 + t[2]*a[1] - s*a[0]
+  rot[2, 2] = c + t[2]*a[2]
+  rot[3, 2] = 0
+
+  return rot
 }

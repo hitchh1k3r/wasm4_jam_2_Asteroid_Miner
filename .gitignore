@@ -1,3 +1,7 @@
-/game.wasm
-/index.html
+/meta/*.bytes
+/meta/*.png
+
 *.sublime-workspace
+*.blend1
+*.wasm
+*.html

@@ -22,11 +22,26 @@ to_depth :: proc(z : f32) -> Depth {
   return Depth(clamp(255*z, 0, 255))
 }
 
+// Storage /////////////////////////////////////////////////////////////////////////////////////////
+
+BLUE_NOISE_SIZE :: 16
+blue_noise_void_cluster := #load("../res/blue_noise_void_cluster_16.bytes")
+
+Model3D :: distinct []u8
+
+ModelFlagSet :: bit_set[ModelFlag; u8]
+ModelFlag :: enum u8 {
+  Has_Normals = 0,
+}
+
+model_asteroid_01 := Model3D(#load("../res/model_asteroid_01.bytes"))
+
 // State ///////////////////////////////////////////////////////////////////////////////////////////
 
 depth_buffer := ((^[w4.SCREEN_SIZE*w4.SCREEN_SIZE]Depth)(uintptr(MEM_DEPTH_BUFFER)))
 
 matrix_projection : glm.mat4
+matrix_view : glm.mat4
 
 @(private="file") pallet_cycle : u8
 current_color : Color
@@ -35,6 +50,7 @@ current_color : Color
 
 init_graphics :: proc() {
   matrix_projection = glm.mat4Perspective(60 * math.RAD_PER_DEG, 1, 0.5, 100)
+  matrix_view = glm.identity(glm.mat4)
 }
 
 update_pallet :: proc() {
@@ -74,17 +90,73 @@ DrawOption :: enum u8 {
   Pixel_Border,
   No_Color_Write,
   No_Depth_Write,
+  Do_Lighting,
 }
 
-draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -> bool {
+draw_star :: proc(dir : V3) {
+  vp_mat := get_vp_mat()
+  screen_point := hclip_to_screen(vp_mat * V4{ dir.x, dir.y, dir.z, 0 })
+  if screen_point.x >= 0 && screen_point.x < w4.SCREEN_SIZE && screen_point.y >= 0 && screen_point.y < w4.SCREEN_SIZE {
+    set_pixel(iround(screen_point.x), iround(screen_point.y), .Gray)
+  }
+}
+
+draw_model :: proc(model : Model3D, center : V3, rotation := glm.quat{}, size := V3_ONE) {
+  model_matrix := glm.mat4Translate(center) * glm.mat4Scale(size) * glm.mat4FromQuat(rotation)
+
+  model_flags := transmute(ModelFlagSet)model[0]
+  vert_count := int(model[1])
+
+  vert_size := 3
+  if .Has_Normals in model_flags {
+    vert_size += 3
+  }
+
+  decode_f32 :: proc(bits : u8) -> f32 {
+    return (f32(bits) / 255.0) - 0.5
+  }
+
+  for face_read := vert_size*vert_count+2; face_read < len(model); face_read += 3 {
+    data := model[face_read:face_read+3]
+    a_idx := vert_size*int(data[0])
+    b_idx := vert_size*int(data[1])
+    c_idx := vert_size*int(data[2])
+    a := V3((model_matrix * V4{ decode_f32(model[a_idx + 2]), decode_f32(model[a_idx + 3]), decode_f32(model[a_idx + 4]), 1 }).xyz)
+    b := V3((model_matrix * V4{ decode_f32(model[b_idx + 2]), decode_f32(model[b_idx + 3]), decode_f32(model[b_idx + 4]), 1 }).xyz)
+    c := V3((model_matrix * V4{ decode_f32(model[c_idx + 2]), decode_f32(model[c_idx + 3]), decode_f32(model[c_idx + 4]), 1 }).xyz)
+
+    if .Has_Normals in model_flags {
+      a_norm := V3((model_matrix * V4{ decode_f32(model[a_idx + 5]), decode_f32(model[a_idx + 6]), decode_f32(model[a_idx + 7]), 0 }).xyz)
+      b_norm := V3((model_matrix * V4{ decode_f32(model[b_idx + 5]), decode_f32(model[b_idx + 6]), decode_f32(model[b_idx + 7]), 0 }).xyz)
+      c_norm := V3((model_matrix * V4{ decode_f32(model[c_idx + 5]), decode_f32(model[c_idx + 6]), decode_f32(model[c_idx + 7]), 0 }).xyz)
+      face_norm := glm.normalize(glm.cross(b-a, c-a))
+      a_norm = (0.75*a_norm + 0.25*face_norm)
+      b_norm = (0.75*b_norm + 0.25*face_norm)
+      c_norm = (0.75*c_norm + 0.25*face_norm)
+      draw_triangle_norm(a, b, c, a_norm, b_norm, c_norm, .White, { .No_Cull_CW, .Cull_CCW, .Pixel_Border }, 0.05)
+      draw_triangle_norm(a, b, c, a_norm, b_norm, c_norm, .Gray, { .Do_Lighting })
+    } else {
+      draw_triangle(a, b, c, .White, { .No_Cull_CW, .Cull_CCW, .Pixel_Border }, 0.05)
+      draw_triangle(a, b, c, .Gray, { .Do_Lighting })
+    }
+  }
+}
+
+draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}, depth_offset := f32(0)) -> bool {
+  norm := glm.normalize(glm.cross(b-a, c-a))
+  return draw_triangle_norm(a, b, c, norm, norm, norm, color, options, depth_offset)
+}
+
+draw_triangle_norm :: proc(a, b, c : V3, a_norm, b_norm, c_norm : V3, color : Color, options := DrawOptionSet{}, depth_offset := f32(0)) -> bool {
+  light_dir := glm.normalize(V3{ 1, 4, 2 })
 
   // Vertex Processing ---------
 
-  mvp := get_mvp()
+  vp_mat := get_vp_mat()
 
-  a := hclip_to_screen(mvp * V4{ a.x, a.y, a.z, 1 })
-  b := hclip_to_screen(mvp * V4{ b.x, b.y, b.z, 1 })
-  c := hclip_to_screen(mvp * V4{ c.x, c.y, c.z, 1 })
+  a := hclip_to_screen(vp_mat * V4{ a.x, a.y, a.z, 1 })
+  b := hclip_to_screen(vp_mat * V4{ b.x, b.y, b.z, 1 })
+  c := hclip_to_screen(vp_mat * V4{ c.x, c.y, c.z, 1 })
 
   winding := triangle_direction(a.xy, b.xy, c.xy)
   if (.No_Cull_CW not_in options && winding == .Clockwise) ||
@@ -93,20 +165,32 @@ draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -
     return false
   }
 
+  a_norm := a_norm
+  b_norm := b_norm
+  c_norm := c_norm
+  if winding == .Clockwise {
+    a_norm = -a_norm
+    b_norm = -b_norm
+    c_norm = -c_norm
+  }
+
   // Rasterization -------------
 
   Interpolator :: struct {
-    dpos : V3,
+    dpos :  V3,
+    dnorm : V3,
   }
 
   Vary :: struct {
     using pos : V3,
+    norm : V3,
   }
 
   make_d_dy :: proc(from, to : Vary) -> Interpolator {
     dy := max(1, abs(math.round(to.y) - math.round(from.y)))
     return Interpolator{
       dpos = (to.pos - from.pos) / dy,
+      dnorm = (to.norm - from.norm) / dy,
     }
   }
 
@@ -114,12 +198,14 @@ draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -
     dx := max(1, abs(math.round(to.x) - math.round(from.x)))
     return Interpolator{
       dpos = (to.pos - from.pos) / dx,
+      dnorm = (to.norm - from.norm) / dx,
     }
   }
 
   iterate :: proc(base : Vary, d_dy : Interpolator, steps : int) -> Vary {
     result := base
     result.pos += f32(steps) * d_dy.dpos
+    result.norm += f32(steps) * d_dy.dnorm
     return result
   }
 
@@ -127,17 +213,17 @@ draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -
   top, right, left : Vary = ---, ---, ---
   {
     if a.y < b.y && a.y < c.y {
-      top = { a }
-      right = { c }
-      left = { b }
+      top = { a, a_norm }
+      right = { c, c_norm }
+      left = { b, b_norm }
     } else if b.y < c.y {
-      top = { b }
-      right = { a }
-      left = { c }
+      top = { b, b_norm }
+      right = { a, a_norm }
+      left = { c, c_norm }
     } else {
-      top = { c }
-      right = { b }
-      left = { a }
+      top = { c, c_norm }
+      right = { b, b_norm }
+      left = { a, a_norm }
     }
   }
   if winding == .Clockwise {
@@ -191,6 +277,11 @@ draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -
     row_step := 0
 
     if .Pixel_Border in options {
+      draw_y -= 1
+      if draw_y < 0 {
+        continue
+      }
+
       for i in 0..=1 {
         left_border[i] = left_border[i+1]
         right_border[i] = right_border[i+1]
@@ -202,7 +293,6 @@ draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -
         left_border[2] = w4.SCREEN_SIZE
         right_border[2] = 0
       }
-      draw_y -= 1
       left_px = min(left_border[0], min(left_border[1], left_border[2]))
       right_px = max(right_border[0], max(right_border[1], right_border[2]))
       row_left = iterate(left_base, left_dy, left_steps-1)
@@ -217,13 +307,22 @@ draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}) -
     for draw_x in max(0, left_px)..=min(w4.SCREEN_SIZE-1, right_px) {
       frag := iterate(row_left, row_dx, row_step)
       if frag.z >= 0 || frag.z <= 1 {
-        depth := to_depth(frag.z)
+        depth := to_depth(frag.z+depth_offset)
         depth_idx := draw_x + w4.SCREEN_SIZE*draw_y
         if .No_Cull_Depth_Occluded not_in options && depth >= depth_buffer[depth_idx] {
           continue
         }
         if .Cull_Depth_Front in options && depth <= depth_buffer[depth_idx] {
           continue
+        }
+
+        color := color
+        if .Do_Lighting in options {
+          offset := 7*int(10*time) % BLUE_NOISE_SIZE
+          noise_idx := (draw_x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((draw_y+offset) % BLUE_NOISE_SIZE))
+          if u8(255*clamp(1.75*glm.dot(light_dir, frag.norm)+0.5, 0, 1)) < blue_noise_void_cluster[noise_idx] {
+            color = .Black
+          }
         }
 
         if .No_Color_Write not_in options {
@@ -282,13 +381,16 @@ set_pixel :: proc(#any_int x, y : int, color : Color) {
 
 // Utility /////////////////////////////////////////////////////////////////////////////////////////
 
-get_mvp :: proc() -> glm.mat4 {
-  return matrix_projection
+get_vp_mat :: proc() -> glm.mat4 {
+  return matrix_projection * matrix_view
 }
 
 hclip_to_screen :: proc(hclip : V4) -> V3 {
-  hclip := hclip.xyz / hclip.w
+  hclip := hclip
+  if hclip.w != 0 {
+    hclip = hclip / hclip.w
+  }
   hclip.y = -hclip.y
   hclip.xy = (hclip.xy + 1) * (w4.SCREEN_SIZE/2)
-  return V3(hclip)
+  return V3(hclip.xyz)
 }

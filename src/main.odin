@@ -1,6 +1,8 @@
 package main
 
 import "core:math"
+import "core:math/rand"
+import glm "core:math/linalg/glsl"
 
 import w4 "wasm4"
 
@@ -23,63 +25,12 @@ update :: proc "c" () {
   update_pallet()
   clear_depth_buffer()
 
-  draw_triangle({ -0.2, 0.5*sin(0.5*time), -3 }, { -0.3, -0.2+0.5*sin(0.5*time), -2 }, {  0.3, -0.2+0.5*sin(0.5*time), -2 }, .Black, { .Pixel_Border, .No_Cull_Depth_Occluded })
-  draw_triangle({ -0.9, 0.2*sin(0.5*time), -3 }, { -0.5, -0.5, -2 }, {  0.9,  0.2, -2 }, .Black, { .Pixel_Border, .No_Cull_Depth_Occluded })
-  draw_triangle({  0.2, 0, -3 }, {  0.3+0.1*sin(0.5*time),  0.2+0.1*cos(0.5*time), -2 }, { -0.3,  0.4, -2 }, .Black, { .Pixel_Border, .No_Cull_Depth_Occluded })
-  draw_triangle({  0.9, 0, -3 }, {  0.5,  0.1, -2 }, { -0.8+0.1*cos(0.5*time), -0.4, -2 }, .Black, { .Pixel_Border, .No_Cull_Depth_Occluded })
+  matrix_view =  glm.mat4Translate({ 0, 0, 10*sin(0.5*time)-12 }) * mat4Rotate(glm.vec3{ 1, 0, 0 }, math.TAU+0.5*sin(0.25*time)) * mat4Rotate(glm.vec3(V3_UP), 0.2*time)
 
-  draw_triangle({ -0.2, 0.5*sin(0.5*time), -3 }, { -0.3, -0.2+0.5*sin(0.5*time), -2 }, {  0.3, -0.2+0.5*sin(0.5*time), -2 }, .Gray, { .No_Cull_Depth_Occluded })
-  draw_triangle({ -0.9, 0.2*sin(0.5*time), -3 }, { -0.5, -0.5, -2 }, {  0.9,  0.2, -2 }, .Gray, { .No_Cull_Depth_Occluded })
-  draw_triangle({  0.2, 0, -3 }, {  0.3+0.1*sin(0.5*time),  0.2+0.1*cos(0.5*time), -2 }, { -0.3,  0.4, -2 }, .Gray, { .No_Cull_Depth_Occluded })
-  draw_triangle({  0.9, 0, -3 }, {  0.5,  0.1, -2 }, { -0.8+0.1*cos(0.5*time), -0.4, -2 }, .Gray, { .No_Cull_Depth_Occluded })
-
-  draw_triangle({ -0.2, 0.5*sin(0.5*time), -3 }, { -0.3, -0.2+0.5*sin(0.5*time), -2 }, {  0.3, -0.2+0.5*sin(0.5*time), -2 }, .Cyan, { .No_Cull_Depth_Occluded })
-  draw_triangle({ -0.9, 0.2*sin(0.5*time), -3 }, { -0.5, -0.5, -2 }, {  0.9,  0.2, -2 }, .Orange, { .No_Cull_Depth_Occluded })
-  draw_triangle({  0.2, 0, -3 }, {  0.3+0.1*sin(0.5*time),  0.2+0.1*cos(0.5*time), -2 }, { -0.3,  0.4, -2 }, .Green, { .No_Cull_Depth_Occluded })
-  draw_triangle({  0.9, 0, -3 }, {  0.5,  0.1, -2 }, { -0.8+0.1*cos(0.5*time), -0.4, -2 }, .Yellow, { .No_Cull_Depth_Occluded })
-
-  draw_triangle({ -3, -3, 0.5*sin(time)-2.5 }, { 10, -3, 0.5*sin(time)-2.5 }, { -3, 10, 0.5*sin(time)-2.5 }, .Gray, {  })
-
-  for x in 0..<w4.SCREEN_SIZE {
-    set_pixel(x, w4.SCREEN_SIZE/2+int((w4.SCREEN_SIZE/2 - 10)*sin(0.01*(f32(x)+50*time))), .White)
+  star_rand := rand.create(42)
+  for star in 0..<100 {
+    draw_star({ 2*rand.float32(&star_rand) - 1, 2*rand.float32(&star_rand) - 1, 2*rand.float32(&star_rand) - 1 })
   }
 
-  s := f32_to_str(time)
-  w4.DRAW_COLORS^ = 0x0001
-  w4.text(s, 11, 11)
-  w4.DRAW_COLORS^ = 0x0003
-  w4.text(s, 10, 10)
-
-  w4.DRAW_COLORS^ = 0x0004
-  w4.text(f32_to_str(math.mod(0.1*time, math.TAU), 3), 80, 10)
-  w4.text(f32_to_str(sin(math.mod(0.1*time, math.TAU)), 3), 80, 20)
-
-  w4.DRAW_COLORS^ = 0x0003
-  w4.text(f32_to_str(1.0, 3), 10, 25)
-  w4.text(f32_to_str(sin(1.0), 3), 10, 35)
-
-  w4.text(f32_to_str(1.6, 3), 10, 50)
-  w4.text(f32_to_str(sin(1.6), 3), 10, 60)
-
-  w4.text(f32_to_str(2.2, 3), 10, 75)
-  w4.text(f32_to_str(sin(2.2), 3), 10, 85)
-
-  w4.text(f32_to_str(math.PI, 3), 10, 100)
-  w4.text(f32_to_str(sin(math.PI), 3), 10, 110)
-
-  w4.text(f32_to_str(0.0, 3), 10, 125)
-  w4.text(f32_to_str(sin(0.0), 3), 10, 135)
-
-  w4.text(f32_to_str(0.499*math.PI, 3), 80, 35)
-  w4.text(f32_to_str(sin(0.45*math.PI), 3), 80, 45)
-
-  w4.text(f32_to_str(0.5*math.PI, 3), 80, 60)
-  w4.text(f32_to_str(sin(0.5*math.PI), 3), 80, 70)
-
-  w4.text(f32_to_str(0.501*math.PI, 3), 80, 85)
-  w4.text(f32_to_str(sin(0.55*math.PI), 3), 80, 95)
-
-  w4.text(f32_to_str(3.6, 3), 80, 110)
-  w4.text(f32_to_str(sin(3.6), 3), 80, 120)
-
+  draw_model(model_asteroid_01, { 0, 0, 0 }, quatAxisAngle(V3_UP, 0.5*time) * quatAxisAngle(V3_RIGHT, 0.3333*time))
 }

@@ -1,0 +1,20 @@
+- bit_set as array key
+  VertId :: enum { A, B, C }
+  EdgeId :: bit_set[VertId]
+  hard_edges := [EdgeId]bool {
+    { .A, .B } = true,
+    { .B, .C } = false,
+    { .C, .A } = false,
+  }
+
+
+- array key as range (could be used for non-zero indexed arrays, makes Odin's arrays even more like pascal's)
+  one_indexed := [1..=10]int {}
+
+
+- max for bit_sets
+  max(bit_set[enum { A, B }]) should return 0b11
+
+
+- for range as constant value
+  #unroll for i in 0..<SIN_COUNT do sin_lookup[i] = math.sin(0.25 * math.TAU / f32(i * SIN_COUNT))
