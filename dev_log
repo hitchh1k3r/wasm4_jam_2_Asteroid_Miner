@@ -3,4 +3,7 @@
   - Adding WASM-4 interface (note linking with `strip-all`) and drawing "hello world" makes it 775 bytes
   - Global variables inflate the cart size, we can avoid that by explicitly laying out the memory, and creating raw pointers
   - Doing math on an array (normally does SIMD, but that's not supported in WASM) seems to fallback to an unroll for loop (which uses a lot of cart space), we can write the loop ourselves to save space
-  - I halved the stack from 14752 to 7376, hopefully this wont cause issues, if I need more space the stack will start running into the bottom ofthe frame buffer and corruption can be seen at the bottom of the screen
+  - I reduced the stack from 14752 to 12800, hopefully this wont cause issues, if I need more space the stack will start running into the bottom ofthe frame buffer and corruption can be seen at the bottom of the screen
+
+2022-08-14
+  - Basic 3d drawing functions bump the cart to 5837 bytes, we had to implment our own trig. functions because of an Odin/LLVM and WASM issue.

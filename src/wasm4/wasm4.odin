@@ -19,7 +19,7 @@ Button :: enum u8 {
   _     = 3,
   Left  = 4,
   Right = 5,
-  Uo    = 6,
+  Up    = 6,
   Down  = 7,
 }
 
@@ -32,8 +32,8 @@ MouseButton :: enum u8 {
 
 SystemFlagSet :: distinct bit_set[SystemFlag; u8]
 SystemFlag :: enum u8 {
-  PreserveFramebuffer = 0,
-  HideGamepadOverlay  = 1,
+  Preserve_Framebuffer = 0,
+  Hide_Gamepad_Overlay  = 1,
 }
 
 NetPlay :: enum u8 {
@@ -62,8 +62,8 @@ FRAMEBUFFER   := (^[6400]u8)(uintptr(0xa0))
 BlitFlagSet :: distinct bit_set[BlitFlag; u32]
 BlitFlag :: enum u32 {
   Use_2BPP      = 0,
-  FlipX         = 1,
-  FlipY         = 2,
+  Flip_X        = 1,
+  Flip_Y        = 2,
   Rotate_CCW_90 = 3,
 }
 
