@@ -27,6 +27,16 @@ to_depth :: proc(z : f32) -> Depth {
 BLUE_NOISE_SIZE :: 16
 blue_noise_void_cluster := #load("../res/blue_noise_void_cluster_16.bytes")
 
+ORDERED_NOISE_SIZE :: 4
+ordered_noise := [ORDERED_NOISE_SIZE*ORDERED_NOISE_SIZE]byte {
+    0, 136,  34, 170,
+  204,  68, 238, 102,
+   51, 187,  17, 153,
+  255, 119, 221,  85,
+}
+
+
+
 Model3D :: distinct []u8
 
 ModelFlagSet :: bit_set[ModelFlag; u8]
@@ -35,6 +45,49 @@ ModelFlag :: enum u8 {
 }
 
 model_asteroid_01 := Model3D(#load("../res/model_asteroid_01.bytes"))
+model_player_ship := Model3D(#load("../res/model_player_ship.bytes"))
+
+
+
+Material :: struct {
+  color : Color,
+  options : bit_set[enum u8 { No_Outline, Dither_Ordered, Dither_Blue, Flicker, Do_Lighting, Black_When_Inactive, No_Color_Write, No_Depth_Write }],
+}
+
+material_outline := Material{
+  color = .White,
+  options = { .No_Outline },
+}
+
+material_asteroid := Material{
+  color = .Gray,
+  options = { .Dither_Blue, .Do_Lighting },
+}
+
+material_metal := Material{
+  color = .Gray,
+  options = { .Dither_Ordered, .Do_Lighting },
+}
+
+material_black := Material{
+  color = .Black,
+  options = { },
+}
+
+material_engine := Material{
+  color = .White,
+  options = { .Flicker, .Black_When_Inactive },
+}
+
+material_orange_lamp := Material{
+  color = .Orange,
+  options = { .Black_When_Inactive },
+}
+
+material_cyan_lamp := Material{
+  color = .Cyan,
+  options = { .Black_When_Inactive },
+}
 
 // State ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -88,21 +141,17 @@ DrawOption :: enum u8 {
   No_Cull_Depth_Occluded,
   Cull_Depth_Front,
   Pixel_Border,
-  No_Color_Write,
-  No_Depth_Write,
-  Do_Lighting,
 }
 
-draw_star :: proc(dir : V3) {
-  vp_mat := get_vp_mat()
-  screen_point := hclip_to_screen(vp_mat * V4{ dir.x, dir.y, dir.z, 0 })
+draw_star :: proc(dir : V3, color : Color) {
+  screen_point := model_to_screen(V4{ dir.x, dir.y, dir.z, 0 })
   if screen_point.x >= 0 && screen_point.x < w4.SCREEN_SIZE && screen_point.y >= 0 && screen_point.y < w4.SCREEN_SIZE {
-    set_pixel(iround(screen_point.x), iround(screen_point.y), .Gray)
+    set_pixel(iround(screen_point.x), iround(screen_point.y), color)
   }
 }
 
-draw_model :: proc(model : Model3D, center : V3, rotation := glm.quat{}, size := V3_ONE) {
-  model_matrix := glm.mat4Translate(center) * glm.mat4Scale(size) * glm.mat4FromQuat(rotation)
+draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotation := glm.quat{}, size := V3_ONE) {
+  model_matrix := glm.mat4Translate(center) * glm.mat4FromQuat(rotation) * glm.mat4Scale(size)
 
   model_flags := transmute(ModelFlagSet)model[0]
   vert_count := int(model[1])
@@ -112,51 +161,94 @@ draw_model :: proc(model : Model3D, center : V3, rotation := glm.quat{}, size :=
     vert_size += 3
   }
 
+  reverse_culling := ((size.x * size.y * size.z) < 0)
+  fill_options := DrawOptionSet{  }
+  border_options := DrawOptionSet{ .No_Cull_CW, .Cull_CCW }
+  if reverse_culling {
+    fill_options, border_options = border_options, fill_options
+  }
+  border_options |= { .Pixel_Border }
+
   decode_f32 :: proc(bits : u8) -> f32 {
     return (f32(bits) / 255.0) - 0.5
   }
 
   for face_read := vert_size*vert_count+2; face_read < len(model); face_read += 3 {
     data := model[face_read:face_read+3]
-    a_idx := vert_size*int(data[0])
-    b_idx := vert_size*int(data[1])
-    c_idx := vert_size*int(data[2])
-    a := V3((model_matrix * V4{ decode_f32(model[a_idx + 2]), decode_f32(model[a_idx + 3]), decode_f32(model[a_idx + 4]), 1 }).xyz)
-    b := V3((model_matrix * V4{ decode_f32(model[b_idx + 2]), decode_f32(model[b_idx + 3]), decode_f32(model[b_idx + 4]), 1 }).xyz)
-    c := V3((model_matrix * V4{ decode_f32(model[c_idx + 2]), decode_f32(model[c_idx + 3]), decode_f32(model[c_idx + 4]), 1 }).xyz)
+    a_idx := vert_size*int(data[0] & 0b01111111)
+    b_idx := vert_size*int(data[1] & 0b01111111)
+    c_idx := vert_size*int(data[2] & 0b01111111)
+    material_idx := (data[0] >> 5 & 0b100) | (data[1] >> 6 & 0b010) | (data[2] >> 7 & 0b001)
+    a, b, c : Vary = ---, ---, ---
+    a.pos = V3((model_matrix * V4{ decode_f32(model[a_idx + 2]), decode_f32(model[a_idx + 3]), decode_f32(model[a_idx + 4]), 1 }).xyz)
+    b.pos = V3((model_matrix * V4{ decode_f32(model[b_idx + 2]), decode_f32(model[b_idx + 3]), decode_f32(model[b_idx + 4]), 1 }).xyz)
+    c.pos = V3((model_matrix * V4{ decode_f32(model[c_idx + 2]), decode_f32(model[c_idx + 3]), decode_f32(model[c_idx + 4]), 1 }).xyz)
+    face_norm := glm.normalize(glm.cross(b.pos-a.pos, c.pos-a.pos))
 
     if .Has_Normals in model_flags {
       a_norm := V3((model_matrix * V4{ decode_f32(model[a_idx + 5]), decode_f32(model[a_idx + 6]), decode_f32(model[a_idx + 7]), 0 }).xyz)
       b_norm := V3((model_matrix * V4{ decode_f32(model[b_idx + 5]), decode_f32(model[b_idx + 6]), decode_f32(model[b_idx + 7]), 0 }).xyz)
       c_norm := V3((model_matrix * V4{ decode_f32(model[c_idx + 5]), decode_f32(model[c_idx + 6]), decode_f32(model[c_idx + 7]), 0 }).xyz)
-      face_norm := glm.normalize(glm.cross(b-a, c-a))
-      a_norm = (0.75*a_norm + 0.25*face_norm)
-      b_norm = (0.75*b_norm + 0.25*face_norm)
-      c_norm = (0.75*c_norm + 0.25*face_norm)
-      draw_triangle_norm(a, b, c, a_norm, b_norm, c_norm, .White, { .No_Cull_CW, .Cull_CCW, .Pixel_Border }, 0.05)
-      draw_triangle_norm(a, b, c, a_norm, b_norm, c_norm, .Gray, { .Do_Lighting })
+      a.norm = (0.75*a_norm + 0.25*face_norm)
+      b.norm = (0.75*b_norm + 0.25*face_norm)
+      c.norm = (0.75*c_norm + 0.25*face_norm)
     } else {
-      draw_triangle(a, b, c, .White, { .No_Cull_CW, .Cull_CCW, .Pixel_Border }, 0.05)
-      draw_triangle(a, b, c, .Gray, { .Do_Lighting })
+      a.norm = face_norm
+      b.norm = face_norm
+      c.norm = face_norm
     }
+
+    if .No_Outline not_in materials[material_idx].options {
+      draw_triangle(a, b, c, material_outline, border_options, 0.05)
+    }
+    draw_triangle(a, b, c, materials[material_idx], fill_options)
   }
 }
 
-draw_triangle :: proc(a, b, c : V3, color : Color, options := DrawOptionSet{}, depth_offset := f32(0)) -> bool {
-  norm := glm.normalize(glm.cross(b-a, c-a))
-  return draw_triangle_norm(a, b, c, norm, norm, norm, color, options, depth_offset)
+Vary :: struct {
+  using pos : V3,
+  norm : V3,
 }
 
-draw_triangle_norm :: proc(a, b, c : V3, a_norm, b_norm, c_norm : V3, color : Color, options := DrawOptionSet{}, depth_offset := f32(0)) -> bool {
+draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOptionSet{}, depth_offset := f32(0)) -> bool {
+  material_color := material.color
+  if .Flicker in material.options && time % 2 == 0 {
+    if .Black_When_Inactive in material.options {
+      material_color = .Black
+    } else {
+      return false
+    }
+  }
+  if material_color == .Orange || material_color == .Cyan || material_color == .Green || material_color == .Yellow {
+    if material_color != current_color {
+      if .Black_When_Inactive in material.options {
+        material_color = .Black
+      } else {
+        return false
+      }
+    }
+  }
+
   light_dir := glm.normalize(V3{ 1, 4, 2 })
 
   // Vertex Processing ---------
 
-  vp_mat := get_vp_mat()
+  a_norm := a.norm
+  b_norm := b.norm
+  c_norm := c.norm
 
-  a := hclip_to_screen(vp_mat * V4{ a.x, a.y, a.z, 1 })
-  b := hclip_to_screen(vp_mat * V4{ b.x, b.y, b.z, 1 })
-  c := hclip_to_screen(vp_mat * V4{ c.x, c.y, c.z, 1 })
+  a := model_to_screen(V4{ a.x, a.y, a.z, 1 })
+  b := model_to_screen(V4{ b.x, b.y, b.z, 1 })
+  c := model_to_screen(V4{ c.x, c.y, c.z, 1 })
+
+  if (a.x < 0 && b.x < 0 && c.x < 0) ||
+     (a.x >= w4.SCREEN_SIZE && b.x >= w4.SCREEN_SIZE && c.x >= w4.SCREEN_SIZE) ||
+     (a.y < 0 && b.y < 0 && c.y < 0) ||
+     (a.y >= w4.SCREEN_SIZE && b.y >= w4.SCREEN_SIZE && c.y >= w4.SCREEN_SIZE) ||
+     (a.z < 0 && b.z < 0 && c.z < 0) ||
+     (a.z > 1 && b.z > 1 && c.z > 1) {
+      return false
+  }
 
   winding := triangle_direction(a.xy, b.xy, c.xy)
   if (.No_Cull_CW not_in options && winding == .Clockwise) ||
@@ -165,9 +257,6 @@ draw_triangle_norm :: proc(a, b, c : V3, a_norm, b_norm, c_norm : V3, color : Co
     return false
   }
 
-  a_norm := a_norm
-  b_norm := b_norm
-  c_norm := c_norm
   if winding == .Clockwise {
     a_norm = -a_norm
     b_norm = -b_norm
@@ -179,11 +268,6 @@ draw_triangle_norm :: proc(a, b, c : V3, a_norm, b_norm, c_norm : V3, color : Co
   Interpolator :: struct {
     dpos :  V3,
     dnorm : V3,
-  }
-
-  Vary :: struct {
-    using pos : V3,
-    norm : V3,
   }
 
   make_d_dy :: proc(from, to : Vary) -> Interpolator {
@@ -306,7 +390,7 @@ draw_triangle_norm :: proc(a, b, c : V3, a_norm, b_norm, c_norm : V3, color : Co
     }
     for draw_x in max(0, left_px)..=min(w4.SCREEN_SIZE-1, right_px) {
       frag := iterate(row_left, row_dx, row_step)
-      if frag.z >= 0 || frag.z <= 1 {
+      if frag.z >= 0 && frag.z <= 1 {
         depth := to_depth(frag.z+depth_offset)
         depth_idx := draw_x + w4.SCREEN_SIZE*draw_y
         if .No_Cull_Depth_Occluded not_in options && depth >= depth_buffer[depth_idx] {
@@ -316,19 +400,29 @@ draw_triangle_norm :: proc(a, b, c : V3, a_norm, b_norm, c_norm : V3, color : Co
           continue
         }
 
-        color := color
-        if .Do_Lighting in options {
-          offset := 7*int(10*time) % BLUE_NOISE_SIZE
-          noise_idx := (draw_x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((draw_y+offset) % BLUE_NOISE_SIZE))
-          if u8(255*clamp(1.75*glm.dot(light_dir, frag.norm)+0.5, 0, 1)) < blue_noise_void_cluster[noise_idx] {
+        color := material_color
+        if .Do_Lighting in material.options {
+          light := u8(255*clamp(0.5*glm.dot(light_dir, frag.norm)+0.5, 0, 1))
+          threshold := u8(128)
+
+          if .Dither_Ordered in material.options {
+            noise_idx := (draw_x % ORDERED_NOISE_SIZE) + (ORDERED_NOISE_SIZE*(draw_y % ORDERED_NOISE_SIZE))
+            threshold = ordered_noise[noise_idx]/3 + (128-256/3/2)
+          } else if .Dither_Blue in material.options {
+            offset := int(7*(time/5) % BLUE_NOISE_SIZE)
+            noise_idx := (draw_x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((draw_y+offset) % BLUE_NOISE_SIZE))
+            threshold = blue_noise_void_cluster[noise_idx]/3 + (128-256/3/2)
+          }
+
+          if light < threshold {
             color = .Black
           }
         }
 
-        if .No_Color_Write not_in options {
+        if .No_Color_Write not_in material.options {
           set_pixel(draw_x, draw_y, color)
         }
-        if .No_Depth_Write not_in options {
+        if .No_Depth_Write not_in material.options {
           depth_buffer[depth_idx] = depth
         }
       }
@@ -385,12 +479,14 @@ get_vp_mat :: proc() -> glm.mat4 {
   return matrix_projection * matrix_view
 }
 
-hclip_to_screen :: proc(hclip : V4) -> V3 {
-  hclip := hclip
-  if hclip.w != 0 {
-    hclip = hclip / hclip.w
+model_to_screen :: proc(model : V4) -> V3 {
+  view_point := matrix_view * model
+  projected_point := matrix_projection * view_point
+  if projected_point.w != 0 {
+    projected_point = projected_point / projected_point.w
   }
-  hclip.y = -hclip.y
-  hclip.xy = (hclip.xy + 1) * (w4.SCREEN_SIZE/2)
-  return V3(hclip.xyz)
+  projected_point.y = -projected_point.y
+  projected_point.xy = (projected_point.xy + 1) * (w4.SCREEN_SIZE/2)
+  projected_point.z = clamp(math.remap(view_point.z, -0.5, -100.0, 0.0, 1.0), -1, 2)
+  return V3(projected_point.xyz)
 }

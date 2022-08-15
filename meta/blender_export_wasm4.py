@@ -23,7 +23,7 @@ def do_export(context, props, filepath):
     face_buff = []
 
     for poly in mesh.polygons:
-        tri_buff = []
+        tri_buff = [poly.material_index]
         for index in poly.loop_indices:
             thisVertex = mesh.vertices[mesh.loops[index].vertex_index].co
             thisNormal = mesh.vertices[mesh.loops[index].vertex_index].normal
@@ -46,12 +46,12 @@ def do_export(context, props, filepath):
                 vert_buff.append(thisVertex)
                 norm_buff.append(thisNormal)
 
-        if(len(tri_buff) != 3):
+        if(len(tri_buff) != 4):
             print('Export failed. The mesh must be triangulated.')
             return False
 
-        if(len(vert_buff) > 256):
-            print('Export failed. The mesh can have at most 256 verticies.')
+        if(len(vert_buff) > 128):
+            print('Export failed. The mesh can have at most 128 verticies.')
             return False
 
         face_buff.append(tri_buff)
@@ -75,7 +75,11 @@ def do_export(context, props, filepath):
                 ofile.write(bytearray([nx, ny, nz]))
             i += 1
         for tri in face_buff:
-            ofile.write(bytearray(tri))
+            buff = [tri[1], tri[2], tri[3]]
+            buff[0] |= (tri[0] & 0b00000100) << (7-2)
+            buff[1] |= (tri[0] & 0b00000010) << (7-1)
+            buff[2] |= (tri[0] & 0b00000001) << (7-0)
+            ofile.write(bytearray(buff))
         ofile.close()
     return {'FINISHED'}
 

@@ -7,3 +7,4 @@
 
 2022-08-14
   - Basic 3d drawing functions bump the cart to 5837 bytes, we had to implment our own trig. functions because of an Odin/LLVM and WASM issue.
+  - Improved rendering a bit, added player ship and basic flying, cart is now 33330 bytes (I'm not sure why it is 6 times bigger, I will have to figure that out tomorrow)!
