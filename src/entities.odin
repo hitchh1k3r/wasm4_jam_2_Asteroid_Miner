@@ -5,22 +5,19 @@ import glm "core:math/linalg/glsl"
 // Half precision fixed point number (if world is 200x200x200 we have a resolution of 0.0031)
 H3 :: [3]u16
 
-// 24 byte limit, so we can fit an estimated 500 entities in 12000 bytes
-#assert(size_of(Entity) <= 24)
-// entities : [500]Entity
 players : [4]EntityPlayer
+asteroids := (^[500]EntityAsteroid)(uintptr(MEM_ASTEROIDS))
 
-Entity :: union {
-  EntityComet,
-}
-
-EntityPlayer :: struct { // 28 bytes
+EntityPlayer :: struct { // 56 bytes
+  speed : f32,           //    4 bytes
   pos : V3,              //   12 bytes
-  rotation : glm.quat,   //   16 bytes
+  rotation : Q,          //   16 bytes
+  pos_velocity : V3,     //   12
+  rot_velocity : V3,     //   12
 }
 
-EntityComet :: struct {  // 8 bytes
-  pos : H3,              //   6 bytes
-  animation_offset : u8, //   1 byte
-  size : u8,             //   1 byte
+EntityAsteroid :: struct { // 8 bytes
+  pos : H3,                //   6 bytes
+  variant : u8,            //   1 byte   ///   0b__VVSSTTTT M=model  S=size  T=rotation time offset
+  health : u8,             //   1 byte
 }

@@ -7,4 +7,9 @@
 
 2022-08-14
   - Basic 3d drawing functions bump the cart to 5837 bytes, we had to implment our own trig. functions because of an Odin/LLVM and WASM issue.
+
+2022-08-15
   - Improved rendering a bit, added player ship and basic flying, cart is now 33330 bytes (I'm not sure why it is 6 times bigger, I will have to figure that out tomorrow)!
+
+2022-08-16
+  - I didn't get to optimizing the cart size... the game is now 41935 bytes, but it has some gameplay. You can fly around and multiple people can join with netplay. There are 500 asteroids (the actual game will probably have less) filling the looping 200x200x200 unit world, asteroids and player ships can be seen through the loop. ^_^

@@ -9,7 +9,7 @@ import w4 "wasm4"
 
 Color :: enum u32 {
   Black =  0x101015,
-  Gray =   0x606060,
+  Gray =   0x434850,
   White =  0xF7F5F3,
   Orange = 0xE69F00,
   Cyan =   0x56B4E9,
@@ -143,6 +143,17 @@ DrawOption :: enum u8 {
   Pixel_Border,
 }
 
+LODCallback :: #type proc(distance : f16, model_matrix : glm.mat4, model : Model3D, center : V3, materials : []Material, rotation : Q, size : V3)
+
+LODOptions :: struct {
+  cutoff_distance : f16,
+  lod_0_distance : f16,
+  lod_0_callback : LODCallback,
+  lod_1_distance : f16,
+  lod_1_callback : LODCallback,
+  border_distance : f16,
+}
+
 draw_star :: proc(dir : V3, color : Color) {
   screen_point := model_to_screen(V4{ dir.x, dir.y, dir.z, 0 })
   if screen_point.x >= 0 && screen_point.x < w4.SCREEN_SIZE && screen_point.y >= 0 && screen_point.y < w4.SCREEN_SIZE {
@@ -150,8 +161,65 @@ draw_star :: proc(dir : V3, color : Color) {
   }
 }
 
-draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotation := glm.quat{}, size := V3_ONE) {
-  model_matrix := glm.mat4Translate(center) * glm.mat4FromQuat(rotation) * glm.mat4Scale(size)
+draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotation := Q_ID, size := V3_ONE, lod_options := LODOptions{}) {
+  rot_mat := glm.mat4FromQuat(rotation)
+  model_matrix := glm.mat4Translate(center) * rot_mat * glm.mat4Scale(size)
+
+  FrustumSet :: bit_set[enum u8 { X_NEG, X_POS, Y_NEG, Y_POS, Z_NEG, Z_POS }]
+
+  test_corner :: proc(v : V3) -> (frustum : FrustumSet) {
+    screen_point := model_to_screen(V4{ v.x, v.y, v.z, 1 })
+    frustum = {}
+    if screen_point.x < 0 {
+      frustum |= { .X_NEG }
+    }
+    if screen_point.y < 0 {
+      frustum |= { .Y_NEG }
+    }
+    if screen_point.z < 0 {
+      frustum |= { .Z_NEG }
+    }
+    if screen_point.x >= w4.SCREEN_SIZE {
+      frustum |= { .X_POS }
+    }
+    if screen_point.y >= w4.SCREEN_SIZE {
+      frustum |= { .Y_POS }
+    }
+    if screen_point.z > 1 {
+      frustum |= { .Z_POS }
+    }
+    return
+  }
+
+  corner_offset := rot_mat * V4{ size.x / 2.0, size.y / 2.0, size.z / 2.0, 1 }
+  failed_frustums := test_corner(center + V3{ -corner_offset.x, -corner_offset.y, -corner_offset.z })
+  failed_frustums &= test_corner(center + V3{  corner_offset.x, -corner_offset.y, -corner_offset.z })
+  failed_frustums &= test_corner(center + V3{ -corner_offset.x,  corner_offset.y, -corner_offset.z })
+  failed_frustums &= test_corner(center + V3{  corner_offset.x,  corner_offset.y, -corner_offset.z })
+  failed_frustums &= test_corner(center + V3{ -corner_offset.x, -corner_offset.y,  corner_offset.z })
+  failed_frustums &= test_corner(center + V3{  corner_offset.x, -corner_offset.y,  corner_offset.z })
+  failed_frustums &= test_corner(center + V3{ -corner_offset.x,  corner_offset.y,  corner_offset.z })
+  failed_frustums &= test_corner(center + V3{  corner_offset.x,  corner_offset.y,  corner_offset.z })
+
+  if failed_frustums > {} {
+    return
+  }
+
+  distance := -f16((matrix_view * V4{ center.x, center.y, center.z, 1 }).z)
+
+  if lod_options.cutoff_distance > 0 && distance > lod_options.cutoff_distance {
+    return
+  }
+
+  if lod_options.lod_0_distance > 0 && distance > lod_options.lod_0_distance {
+    lod_options.lod_0_callback(distance, model_matrix, model, center, materials, rotation, size)
+    return
+  }
+
+  if lod_options.lod_1_distance > 0 && distance > lod_options.lod_1_distance {
+    lod_options.lod_1_callback(distance, model_matrix, model, center, materials, rotation, size)
+    return
+  }
 
   model_flags := transmute(ModelFlagSet)model[0]
   vert_count := int(model[1])
@@ -198,7 +266,7 @@ draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotatio
       c.norm = face_norm
     }
 
-    if .No_Outline not_in materials[material_idx].options {
+    if .No_Outline not_in materials[material_idx].options && (lod_options.border_distance <= 0 || distance < lod_options.border_distance) {
       draw_triangle(a, b, c, material_outline, border_options, 0.05)
     }
     draw_triangle(a, b, c, materials[material_idx], fill_options)
@@ -488,5 +556,7 @@ model_to_screen :: proc(model : V4) -> V3 {
   projected_point.y = -projected_point.y
   projected_point.xy = (projected_point.xy + 1) * (w4.SCREEN_SIZE/2)
   projected_point.z = clamp(math.remap(view_point.z, -0.5, -100.0, 0.0, 1.0), -1, 2)
+  projected_point.z = 1 - projected_point.z
+  projected_point.z = 1 - (projected_point.z * projected_point.z * projected_point.z * projected_point.z)
   return V3(projected_point.xyz)
 }

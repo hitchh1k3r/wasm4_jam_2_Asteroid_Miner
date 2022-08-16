@@ -8,6 +8,7 @@ import glm "core:math/linalg/glsl"
 V2 :: glm.vec2
 V3 :: glm.vec3
 V4 :: glm.vec4
+Q  :: glm.quat
 
 V2_ZERO    :: V2{  0,  0 }
 V2_ONE     :: V2{  1,  1 }
@@ -25,12 +26,15 @@ V3_LEFT    :: V3{ -1,  0,  0 }
 V3_FORWARD :: V3{  0,  0, -1 }
 V3_BACK    :: V3{  0,  0,  1 }
 
+Q_ID       : Q
+
 // Storage /////////////////////////////////////////////////////////////////////////////////////////
 
 SIN_COUNT :: 32
 sin_lookup : [SIN_COUNT]f32
 
 init_math :: proc() {
+  Q_ID.w = 1
   sin_lookup[0] =  math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(0))
   sin_lookup[1] =  math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(1))
   sin_lookup[2] =  math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(2))
@@ -93,7 +97,11 @@ iround :: proc(v : f32) -> int {
 }
 
 sin :: proc(angle : f32, is_cos := false) -> f32 {
-  angle_norm := math.mod(angle, math.TAU) / math.TAU
+  angle_norm := math.mod(angle, math.TAU)
+  if angle_norm < 0 {
+    angle_norm += math.TAU
+  }
+  angle_norm /= math.TAU
   TOTAL_SAMPLE_POINTS :: 4*(SIN_COUNT-1)
   prev_idx := int(TOTAL_SAMPLE_POINTS * angle_norm)
   next_idx := (prev_idx + 1) % TOTAL_SAMPLE_POINTS
@@ -123,24 +131,25 @@ cos :: proc(angle : f32) -> f32 {
   return sin(angle + 0.25*math.TAU, true)
 }
 
-quatAxisAngle :: proc(axis : V3, radians : f32) -> (q : glm.quat) {
+quat_axis_angle :: proc(axis : V3, radians : f32) -> Q {
+  q : Q
   t := radians*0.5
   v := glm.normalize(axis) * sin(t)
   q.x = v.x
   q.y = v.y
   q.z = v.z
   q.w = cos(t)
-  return
+  return q
 }
 
-mat4Rotate :: proc(v: glm.vec3, radians: f32) -> (rot: glm.mat4) {
-  c := f32(cos(radians))
-  s := f32(sin(radians))
+mat4_rotate :: proc(v : glm.vec3, radians : f32) -> glm.mat4 {
+  c := cos(radians)
+  s := sin(radians)
 
   a := glm.normalize(v)
   t := a * (1-c)
 
-  rot = 1
+  rot := glm.mat4(1)
 
   rot[0, 0] = c + t[0]*a[0]
   rot[1, 0] = 0 + t[0]*a[1] + s*a[2]
@@ -159,3 +168,25 @@ mat4Rotate :: proc(v: glm.vec3, radians: f32) -> (rot: glm.mat4) {
 
   return rot
 }
+
+quat_euler :: proc(euler : V3) -> Q {
+  cx, sx := cos(euler.x*0.5), sin(euler.x*0.5)
+  cy, sy := cos(euler.y*0.5), sin(euler.y*0.5)
+  cz, sz := cos(euler.z*0.5), sin(euler.z*0.5)
+
+  q : Q
+
+  q.x = sx*cy*cz - cx*sy*sz
+  q.y = cx*sy*cz + sx*cy*sz
+  q.z = cx*cy*sz - sx*sy*cz
+  q.w = cx*cy*cz + sx*sy*sz
+
+  return q
+}
+
+h3_to_v3 :: proc(v : H3) -> V3 {
+  v := V3{ f32(v.x), f32(v.y), f32(v.z) }
+  return v / f32(max(u16)) * 200 - 100
+}
+
+to_v3 :: proc{ h3_to_v3 }
