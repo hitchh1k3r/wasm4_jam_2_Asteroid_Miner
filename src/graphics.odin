@@ -5,19 +5,32 @@ import glm "core:math/linalg/glsl"
 
 import w4 "wasm4"
 
-// Types ///////////////////////////////////////////////////////////////////////////////////////////
+// Color ///////////////////////////////////////////////////////////////////////////////////////////
 
-Color :: enum u32 {
-  Black =  0x101015,
-  Gray =   0x434850,
-  White =  0xF7F5F3,
-  Orange = 0xE69F00,
-  Cyan =   0x56B4E9,
-  Green =  0x009E73,
-  Yellow = 0xF0E442,
+Color :: enum u8 {
+  Black = 1,
+  Gray = 2,
+  White = 3,
+  Orange = 4,
+  Cyan = 5,
+  Green = 6,
+  Yellow = 7,
 }
 
+color_map := [Color]u32 {
+  .Black =  0x101015,
+  .Gray =   0x434850,
+  .White =  0xF7F5F3,
+  .Orange = 0xE69F00,
+  .Cyan =   0x56B4E9,
+  .Green =  0x009E73,
+  .Yellow = 0xF0E442,
+}
+
+// Depth ///////////////////////////////////////////////////////////////////////////////////////////
+
 Depth :: distinct u8
+
 to_depth :: proc(z : f32) -> Depth {
   return Depth(clamp(255*z, 0, 255))
 }
@@ -25,7 +38,7 @@ to_depth :: proc(z : f32) -> Depth {
 // Storage /////////////////////////////////////////////////////////////////////////////////////////
 
 BLUE_NOISE_SIZE :: 16
-blue_noise_void_cluster := #load("../res/blue_noise_void_cluster_16.bytes")
+blue_noise_void_cluster := #load("../res/blue_noise_void_cluster_16.bytes") // 256 bytes
 
 ORDERED_NOISE_SIZE :: 4
 ordered_noise := [ORDERED_NOISE_SIZE*ORDERED_NOISE_SIZE]byte {
@@ -44,8 +57,8 @@ ModelFlag :: enum u8 {
   Has_Normals = 0,
 }
 
-model_asteroid_01 := Model3D(#load("../res/model_asteroid_01.bytes"))
-model_player_ship := Model3D(#load("../res/model_player_ship.bytes"))
+model_asteroid_01 := Model3D(#load("../res/model_asteroid_01.bytes")) // 494 bytes
+model_player_ship := Model3D(#load("../res/model_player_ship.bytes")) // 296 bytes
 
 
 
@@ -54,37 +67,37 @@ Material :: struct {
   options : bit_set[enum u8 { No_Outline, Dither_Ordered, Dither_Blue, Flicker, Do_Lighting, Black_When_Inactive, No_Color_Write, No_Depth_Write }],
 }
 
-material_outline := Material{
+MATERIAL_OUTLINE :: Material{
   color = .White,
   options = { .No_Outline },
 }
 
-material_asteroid := Material{
+MATERIAL_ASTEROID :: Material{
   color = .Gray,
   options = { .Dither_Blue, .Do_Lighting },
 }
 
-material_metal := Material{
+MATERIAL_METAL :: Material{
   color = .Gray,
   options = { .Dither_Ordered, .Do_Lighting },
 }
 
-material_black := Material{
+MATERIAL_BLACK :: Material{
   color = .Black,
   options = { },
 }
 
-material_engine := Material{
+MATERIAL_ENGINE :: Material{
   color = .White,
   options = { .Flicker, .Black_When_Inactive },
 }
 
-material_orange_lamp := Material{
+MATERIAL_ORANGE_LAMP :: Material{
   color = .Orange,
   options = { .Black_When_Inactive },
 }
 
-material_cyan_lamp := Material{
+MATERIAL_CYAN_LAMP :: Material{
   color = .Cyan,
   options = { .Black_When_Inactive },
 }
@@ -122,7 +135,7 @@ update_pallet :: proc() {
       case 3*CYCLE_LENGTH:
         current_color = Color.Yellow
     }
-    w4.PALLET^ = { u32(Color.Black), u32(Color.Gray), u32(Color.White), u32(current_color) }
+    w4.PALLET^ = { color_map[.Black], color_map[.Gray], color_map[.White], color_map[current_color] }
   }
 }
 
@@ -143,7 +156,7 @@ DrawOption :: enum u8 {
   Pixel_Border,
 }
 
-LODCallback :: #type proc(distance : f16, model_matrix : glm.mat4, model : Model3D, center : V3, materials : []Material, rotation : Q, size : V3)
+LODCallback :: #type proc(distance : f16, center : V3, rotation : Q, size : V3)
 
 LODOptions :: struct {
   cutoff_distance : f16,
@@ -154,70 +167,45 @@ LODOptions :: struct {
   border_distance : f16,
 }
 
-draw_star :: proc(dir : V3, color : Color) {
+draw_star :: proc(dir : V3) {
   screen_point := model_to_screen(V4{ dir.x, dir.y, dir.z, 0 })
-  if screen_point.x >= 0 && screen_point.x < w4.SCREEN_SIZE && screen_point.y >= 0 && screen_point.y < w4.SCREEN_SIZE {
-    set_pixel(iround(screen_point.x), iround(screen_point.y), color)
-  }
+  set_pixel(iround(screen_point.x), iround(screen_point.y), .White)
 }
 
 draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotation := Q_ID, size := V3_ONE, lod_options := LODOptions{}) {
   rot_mat := glm.mat4FromQuat(rotation)
   model_matrix := glm.mat4Translate(center) * rot_mat * glm.mat4Scale(size)
 
-  FrustumSet :: bit_set[enum u8 { X_NEG, X_POS, Y_NEG, Y_POS, Z_NEG, Z_POS }]
-
-  test_corner :: proc(v : V3) -> (frustum : FrustumSet) {
-    screen_point := model_to_screen(V4{ v.x, v.y, v.z, 1 })
-    frustum = {}
-    if screen_point.x < 0 {
-      frustum |= { .X_NEG }
-    }
-    if screen_point.y < 0 {
-      frustum |= { .Y_NEG }
-    }
-    if screen_point.z < 0 {
-      frustum |= { .Z_NEG }
-    }
-    if screen_point.x >= w4.SCREEN_SIZE {
-      frustum |= { .X_POS }
-    }
-    if screen_point.y >= w4.SCREEN_SIZE {
-      frustum |= { .Y_POS }
-    }
-    if screen_point.z > 1 {
-      frustum |= { .Z_POS }
-    }
-    return
-  }
-
-  corner_offset := rot_mat * V4{ size.x / 2.0, size.y / 2.0, size.z / 2.0, 1 }
-  failed_frustums := test_corner(center + V3{ -corner_offset.x, -corner_offset.y, -corner_offset.z })
-  failed_frustums &= test_corner(center + V3{  corner_offset.x, -corner_offset.y, -corner_offset.z })
-  failed_frustums &= test_corner(center + V3{ -corner_offset.x,  corner_offset.y, -corner_offset.z })
-  failed_frustums &= test_corner(center + V3{  corner_offset.x,  corner_offset.y, -corner_offset.z })
-  failed_frustums &= test_corner(center + V3{ -corner_offset.x, -corner_offset.y,  corner_offset.z })
-  failed_frustums &= test_corner(center + V3{  corner_offset.x, -corner_offset.y,  corner_offset.z })
-  failed_frustums &= test_corner(center + V3{ -corner_offset.x,  corner_offset.y,  corner_offset.z })
-  failed_frustums &= test_corner(center + V3{  corner_offset.x,  corner_offset.y,  corner_offset.z })
-
-  if failed_frustums > {} {
-    return
-  }
-
-  distance := -f16((matrix_view * V4{ center.x, center.y, center.z, 1 }).z)
+  cam_cord := matrix_view * V4{ center.x, center.y, center.z, 1 }
+  distance := -f16(cam_cord.z)
 
   if lod_options.cutoff_distance > 0 && distance > lod_options.cutoff_distance {
     return
   }
 
+  screen_point := matrix_projection * cam_cord
+  if screen_point.w != 0 {
+    screen_point = screen_point / screen_point.w
+  }
+  tan_half_fov := math.tan(f32(60.0 * math.RAD_PER_DEG / 2.0))
+  diag := math.sqrt(size.x*size.x + size.y*size.y + size.z*size.z)
+  screen_radius := 0.5 * diag / (f32(distance) * tan_half_fov)
+  if screen_point.x < -1-screen_radius ||
+     screen_point.y < -1-screen_radius ||
+     screen_point.z < -1-screen_radius ||
+     screen_point.x >  1+screen_radius ||
+     screen_point.y >  1+screen_radius ||
+     screen_point.z >  1+screen_radius {
+    return
+  }
+
   if lod_options.lod_0_distance > 0 && distance > lod_options.lod_0_distance {
-    lod_options.lod_0_callback(distance, model_matrix, model, center, materials, rotation, size)
+    lod_options.lod_0_callback(distance, center, rotation, size)
     return
   }
 
   if lod_options.lod_1_distance > 0 && distance > lod_options.lod_1_distance {
-    lod_options.lod_1_callback(distance, model_matrix, model, center, materials, rotation, size)
+    lod_options.lod_1_callback(distance, center, rotation, size)
     return
   }
 
@@ -247,7 +235,7 @@ draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotatio
     b_idx := vert_size*int(data[1] & 0b01111111)
     c_idx := vert_size*int(data[2] & 0b01111111)
     material_idx := (data[0] >> 5 & 0b100) | (data[1] >> 6 & 0b010) | (data[2] >> 7 & 0b001)
-    a, b, c : Vary = ---, ---, ---
+    a, b, c : Vary
     a.pos = V3((model_matrix * V4{ decode_f32(model[a_idx + 2]), decode_f32(model[a_idx + 3]), decode_f32(model[a_idx + 4]), 1 }).xyz)
     b.pos = V3((model_matrix * V4{ decode_f32(model[b_idx + 2]), decode_f32(model[b_idx + 3]), decode_f32(model[b_idx + 4]), 1 }).xyz)
     c.pos = V3((model_matrix * V4{ decode_f32(model[c_idx + 2]), decode_f32(model[c_idx + 3]), decode_f32(model[c_idx + 4]), 1 }).xyz)
@@ -267,7 +255,7 @@ draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotatio
     }
 
     if .No_Outline not_in materials[material_idx].options && (lod_options.border_distance <= 0 || distance < lod_options.border_distance) {
-      draw_triangle(a, b, c, material_outline, border_options, 0.05)
+      draw_triangle(a, b, c, MATERIAL_OUTLINE, border_options, 0.01)
     }
     draw_triangle(a, b, c, materials[material_idx], fill_options)
   }
@@ -340,29 +328,46 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
 
   make_d_dy :: proc(from, to : Vary) -> Interpolator {
     dy := max(1, abs(math.round(to.y) - math.round(from.y)))
-    return Interpolator{
-      dpos = (to.pos - from.pos) / dy,
-      dnorm = (to.norm - from.norm) / dy,
-    }
+    result : Interpolator
+    result.dpos = to.pos
+    result.dpos.x = (result.dpos.x - from.pos.x) / dy
+    result.dpos.y = (result.dpos.y - from.pos.y) / dy
+    result.dpos.z = (result.dpos.z - from.pos.z) / dy
+    result.dnorm = to.norm
+    result.dnorm.x = (result.dnorm.x - from.norm.x) / dy
+    result.dnorm.y = (result.dnorm.y - from.norm.y) / dy
+    result.dnorm.z = (result.dnorm.z - from.norm.z) / dy
+    return result
   }
 
   make_d_dx :: proc(from, to : Vary) -> Interpolator {
     dx := max(1, abs(math.round(to.x) - math.round(from.x)))
-    return Interpolator{
-      dpos = (to.pos - from.pos) / dx,
-      dnorm = (to.norm - from.norm) / dx,
-    }
+    result : Interpolator
+    result.dpos = to.pos
+    result.dpos.x = (result.dpos.x - from.pos.x) / dx
+    result.dpos.y = (result.dpos.y - from.pos.y) / dx
+    result.dpos.z = (result.dpos.z - from.pos.z) / dx
+    result.dnorm = to.norm
+    result.dnorm.x = (result.dnorm.x - from.norm.x) / dx
+    result.dnorm.y = (result.dnorm.y - from.norm.y) / dx
+    result.dnorm.z = (result.dnorm.z - from.norm.z) / dx
+    return result
   }
 
   iterate :: proc(base : Vary, d_dy : Interpolator, steps : int) -> Vary {
+    dist := f32(steps)
     result := base
-    result.pos += f32(steps) * d_dy.dpos
-    result.norm += f32(steps) * d_dy.dnorm
+    result.pos.x += dist * d_dy.dpos.x
+    result.pos.y += dist * d_dy.dpos.y
+    result.pos.z += dist * d_dy.dpos.z
+    result.norm.x += dist * d_dy.dnorm.x
+    result.norm.y += dist * d_dy.dnorm.y
+    result.norm.z += dist * d_dy.dnorm.z
     return result
   }
 
   // Sort verticies:
-  top, right, left : Vary = ---, ---, ---
+  top, right, left : Vary
   {
     if a.y < b.y && a.y < c.y {
       top = { a, a_norm }
@@ -382,7 +387,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
     left, right = right, left
   }
 
-  left_dy, right_dy : Interpolator = ---, ---
+  left_dy, right_dy : Interpolator
   {
     left_dy = make_d_dy(top, left)
     right_dy = make_d_dy(top, right)
@@ -391,7 +396,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
   // Draw:
   left_base, right_base := top, top
   left_steps, right_steps : int
-  left_border, right_border : [3]int = ---, ---
+  left_border, right_border : [3]int
   if .Pixel_Border in options {
     start_x := iround(top.x)
     left_border = start_x-1
@@ -405,15 +410,15 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
   if .Pixel_Border in options {
     bottom_px += 2
   }
-  if top_px < 0 {
+  if top_px <= 0 {
     left_steps = -top_px
     right_steps = -top_px
-    if left_y < 0 {
+    if left_y <= 0 && left_y <= right_y {
       left_base = left
       left_steps = -left_y
       left_dy = make_d_dy(left, right)
     }
-    if right_y < 0 {
+    if right_y <= 0 && right_y < left_y {
       right_base = right
       right_steps = -right_y
       right_dy = make_d_dy(right, left)
@@ -497,12 +502,12 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
       row_step += 1
     }
 
-    if y == left_y {
+    if y == left_y && left_y <= right_y {
       left_base = left
       left_steps = 0
       left_dy = make_d_dy(left, right)
     }
-    if y == right_y {
+    if y == right_y && right_y < left_y {
       right_base = right
       right_steps = 0
       right_dy = make_d_dy(right, left)
@@ -519,26 +524,18 @@ set_pixel :: proc(#any_int x, y : int, color : Color) {
     return
   }
 
-  w4_color : u8
-  if color == current_color {
-    w4_color = 4
-  } else {
-    #partial switch color {
-      case .Black:
-        w4_color = 1
-      case .Gray:
-        w4_color = 2
-      case .White:
-        w4_color = 3
+  w4_color := u8(color)
+  if color >= .Orange {
+    if color != current_color {
+      return
     }
+    w4_color = 4
   }
 
-  if w4_color >= 1 && w4_color <= 4 {
-    screen_idx := x + (y * w4.SCREEN_SIZE)
-    screen_offset := screen_idx % 4
-    screen_idx /= 4
-    w4.FRAMEBUFFER[screen_idx] = (w4.FRAMEBUFFER[screen_idx] & ~(0b11 << u8(2*screen_offset))) | (w4_color-1) << u8(2*screen_offset)
-  }
+  screen_idx := x + (y * w4.SCREEN_SIZE)
+  screen_offset := screen_idx % 4
+  screen_idx /= 4
+  w4.FRAMEBUFFER[screen_idx] = (w4.FRAMEBUFFER[screen_idx] & ~(0b11 << u8(2*screen_offset))) | (w4_color-1) << u8(2*screen_offset)
 }
 
 // Utility /////////////////////////////////////////////////////////////////////////////////////////
@@ -551,10 +548,13 @@ model_to_screen :: proc(model : V4) -> V3 {
   view_point := matrix_view * model
   projected_point := matrix_projection * view_point
   if projected_point.w != 0 {
-    projected_point = projected_point / projected_point.w
+    projected_point.x = projected_point.x / projected_point.w
+    projected_point.y = projected_point.y / projected_point.w
+    projected_point.z = projected_point.z / projected_point.w
   }
   projected_point.y = -projected_point.y
-  projected_point.xy = (projected_point.xy + 1) * (w4.SCREEN_SIZE/2)
+  projected_point.x = (projected_point.x + 1) * (w4.SCREEN_SIZE/2)
+  projected_point.y = (projected_point.y + 1) * (w4.SCREEN_SIZE/2)
   projected_point.z = clamp(math.remap(view_point.z, -0.5, -100.0, 0.0, 1.0), -1, 2)
   projected_point.z = 1 - projected_point.z
   projected_point.z = 1 - (projected_point.z * projected_point.z * projected_point.z * projected_point.z)

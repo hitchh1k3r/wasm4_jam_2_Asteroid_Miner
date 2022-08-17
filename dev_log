@@ -13,3 +13,10 @@
 
 2022-08-16
   - I didn't get to optimizing the cart size... the game is now 41935 bytes, but it has some gameplay. You can fly around and multiple people can join with netplay. There are 500 asteroids (the actual game will probably have less) filling the looping 200x200x200 unit world, asteroids and player ships can be seen through the loop. ^_^
+  - Cart size optimazation notes:
+    - avoid array math (it is MUCH larger)
+    - convert the constant parts of an expression to a constant declaration
+    - declare a zero initiallized struct (uninitiallized is larger), then set the values (do not assign a literal)
+
+2022-08-17
+  - Optimized cart to 39390 bytes (from 41527)

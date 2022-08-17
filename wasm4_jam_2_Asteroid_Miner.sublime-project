@@ -11,7 +11,42 @@
   "folders":
   [
     {
+      "name": "Odin Core",
+      "path": "../../Odin/core",
+    },
+    {
+      "name": "Odin Vendor",
+      "path": "../../Odin/vendor",
+    },
+    {
+      "name": "Odin Shared",
+      "path": "../../Odin/shared",
+    },
+    {
+      "folder_exclude_patterns":
+      [
+        "src",
+        "meta",
+        "res",
+      ],
+      "name": "// Project ////////",
       "path": ".",
-    }
+    },
+    {
+      "name": "// Resources //////",
+      "path": "res",
+    },
+    {
+      "name": "// Meta ///////////",
+      "path": "meta",
+    },
+    {
+      "name": "// Source /////////",
+      "path": "src",
+    },
   ],
+  "settings":
+  {
+    "atomic_save": true,
+  },
 }

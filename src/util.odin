@@ -3,6 +3,8 @@ package main
 @(private="file")
 internal_str_buffer := ((^[MEM_TRANSIENT_DATA_SIZE/size_of(u8)]u8)(uintptr(MEM_TRANSIENT_DATA)))
 
+to_str :: proc{ int_to_str, f32_to_str }
+
 int_to_str :: proc(#any_int num : int, str_buff : []u8 = nil) -> string {
   num := num
   str_buff := str_buff

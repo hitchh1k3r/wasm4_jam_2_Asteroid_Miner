@@ -128,15 +128,15 @@ update :: proc "c" () {
   star_rand := rand.create(42)
   for star in 0..<25 {
     y := 2*rand.float32(&star_rand) - 1
-    draw_star({ 2*rand.float32(&star_rand) - 1, y, 2*rand.float32(&star_rand) - 1 }, .White)
+    draw_star({ 2*rand.float32(&star_rand) - 1, y, 2*rand.float32(&star_rand) - 1 })
   }
   for star in 0..<50 {
     y := 2*rand.float32(&star_rand) - 1
-    draw_star({ 2*rand.float32(&star_rand) - 1, y*y, 2*rand.float32(&star_rand) - 1 }, .White)
+    draw_star({ 2*rand.float32(&star_rand) - 1, y*y, 2*rand.float32(&star_rand) - 1 })
   }
   for star in 0..<100 {
     y := 2*rand.float32(&star_rand) - 1
-    draw_star({ 2*rand.float32(&star_rand) - 1, y*y*y, 2*rand.float32(&star_rand) - 1 }, .White)
+    draw_star({ 2*rand.float32(&star_rand) - 1, y*y*y, 2*rand.float32(&star_rand) - 1 })
   }
 
   LOOP_POS :: []V3{
@@ -179,9 +179,14 @@ update :: proc "c" () {
     }
 
     for asteroid in asteroids {
-      draw_model(model_asteroid_01, to_v3(asteroid.pos) + pos_offset, { material_asteroid }, quat_euler({ f32(time)/20.0, f32(time)/30.0, f32(time)/45.0 }), V3_ONE, {
+      // TODO (hitch) 2022-08-16 LOD draw Z-Test
+      draw_pos := to_v3(asteroid.pos)
+      draw_pos.x += pos_offset.x
+      draw_pos.y += pos_offset.y
+      draw_pos.z += pos_offset.z
+      draw_model(model_asteroid_01, draw_pos, { MATERIAL_ASTEROID }, quat_euler({ f32(time)/20.0, f32(time)/30.0, f32(time)/45.0 }), { 3, 3, 3 }, {
         cutoff_distance = 100,
-        lod_0_distance = 75, lod_0_callback = proc(distance : f16, model_matrix : glm.mat4, model : Model3D, center : V3, materials : []Material, rotation : Q, size : V3) {
+        lod_0_distance = 90, lod_0_callback = proc(distance : f16, center : V3, rotation : Q, size : V3) {
           screen_point := model_to_screen(V4{ center.x, center.y, center.z, 1 })
           x := iround(screen_point.x)
           y := iround(screen_point.y)
@@ -192,7 +197,7 @@ update :: proc "c" () {
               set_pixel(x, y, .Gray)
             }
           }
-        }, lod_1_distance = 50, lod_1_callback = proc(distance : f16, model_matrix : glm.mat4, model : Model3D, center : V3, materials : []Material, rotation : Q, size : V3) {
+        }, lod_1_distance = 80, lod_1_callback = proc(distance : f16, center : V3, rotation : Q, size : V3) {
           screen_point := model_to_screen(V4{ center.x, center.y, center.z, 1 })
           x := iround(screen_point.x)
           y := iround(screen_point.y)
@@ -225,18 +230,18 @@ update :: proc "c" () {
     for player, i in &players {
       left_offset :=  la.mul(player.rotation, V3{ -0.5, 0, 0 })
       right_offset := la.mul(player.rotation, V3{  0.5, 0, 0 })
-      material_lamp := material_orange_lamp
+      material_lamp := MATERIAL_ORANGE_LAMP
       if i % 2 == 0 {
-        material_lamp = material_cyan_lamp
+        material_lamp = MATERIAL_CYAN_LAMP
       }
-      engine_left := material_black
-      engine_right := material_black
+      engine_left := MATERIAL_BLACK
+      engine_right := MATERIAL_BLACK
       if player.speed/0.01 + 1 > f32(time % 10) {
-        engine_left = material_engine
-        engine_right = material_engine
+        engine_left = MATERIAL_ENGINE
+        engine_right = MATERIAL_ENGINE
       }
-      draw_model(model_player_ship, player.pos + pos_offset + left_offset, { material_metal, material_lamp, engine_left, material_black }, player.rotation, { -1, 1, 1 }, { cutoff_distance = 190, border_distance = 30 })
-      draw_model(model_player_ship, player.pos + pos_offset + right_offset, { material_metal, material_lamp, engine_right, material_black }, player.rotation, V3_ONE, { cutoff_distance = 190, border_distance = 30 })
+      draw_model(model_player_ship, player.pos + pos_offset + left_offset, { MATERIAL_METAL, material_lamp, engine_left, MATERIAL_BLACK }, player.rotation, { -1, 1, 1 }, { cutoff_distance = 190, border_distance = 10 })
+      draw_model(model_player_ship, player.pos + pos_offset + right_offset, { MATERIAL_METAL, material_lamp, engine_right, MATERIAL_BLACK }, player.rotation, V3_ONE, { cutoff_distance = 190, border_distance = 10 })
     }
   }
 
