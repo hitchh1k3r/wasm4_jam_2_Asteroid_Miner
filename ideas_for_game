@@ -1,0 +1,87 @@
+Title:
+  Asteroid Miner
+  Asteroids 3000
+  Physic Wars
+
+
+PERFORMANCE
+ - fragment shader function
+ - materials are just an enum with branches to do logic diffs
+ - lighting done per vertex, not per fragment
+ - matrix ops are combine
+ - rewrite all external functions (in "c")
+ - remove nul context creation
+
+
+GAMEPLAY
+ - Shoot
+ - Trail render
+ - Sphere render
+ - Asteroid variation
+ - Asteroid move
+ - Asteroid collision
+ - Physic entity
+ - Physic in asteroid material
+ - Radar
+
+
+
+Up to 4 human players
+Ship rebuilds over time, can instantly rebuild for physic price (decreases over time)
+Astroids drop 5-300 "physic" when blown up (they also respawn so there is an endless supply)
+Ship can hold 255 "physic"
+Bring "physic" back to base to store it (and spend it)
+It can be spent for upgrades/refurbishment
+  - Repair ship
+  - Replace bomb (rebuilt ships will not have bombs)
+  - Move faster
+  - Store more "physic"
+  - Cloaking generator (a sphere around the player that nothing renders inside)
+  - Win the game (costs a lot of physic)
+Maybe a few alternate fire items that could be bought/swapped
+  - Bombs damage ships in a large radius
+  - Cloak generator (a mine-like placeable that creates a sphere hiding everything on the inside when viewed from the outside -- can be destroyed)
+  - Mines
+  - Boost
+  - Warp
+  - Teleporter
+  - Repair Depot
+  - Mules (collect "phyic" and bring it back to base -- good for one trip, must be deployed near "physic")
+  - EMP temporarially disabble ships near the blast
+  - Blackout Bomb (space flash bang) temporarially bind ships near/looking at the blast
+Preconfigured Game Modes:
+  - Scramble
+      win: 500 physic
+  - Skermish
+      win: 10000 physic
+      time limit: 20 min
+      on time over: draw
+  - Quick Match
+      time limit: 5 min
+      on time over: more physic wins
+Game Rules:
+  Victory Condition
+    Collect X Physic
+    Spend X Physic
+    Store X Physic
+    Destroy Opponent Ships X Times
+    - X = (is physics x100) 1-100 or inf.
+  Timer: 1-60 min
+  Time Elapsed: Draw, Leader Wins
+
+
+Intro:
+  Year 23X6 CE
+  To: Earth
+  From: Gemini 57 Expedition
+  There is little to note on the planets in this system. Howevery the asteroid belt here is rather peculiar. They appear to cluster together in large patches. Our probes have recovered a substance we are calling "physic." It has the interesting property that with very little stimulation we can turn it into energy or matter. We believe the transformation could be guided, and nearly anything could be made with this stuff.
+
+  Year 27Yr PCE
+  To: Tristee Board
+  From: RAD Physic Industries
+  (something about making lot of money, and using phyic to manufacture every tye of good for very cheap, underselling all other businesses and then increasing prices)
+
+  Year: 7 PW
+  To: Recruitment Center
+  From: The Physic Consortium
+  (something about RAD needing to be stopped, and trying to collect enough physic to build a competing mining operation)
