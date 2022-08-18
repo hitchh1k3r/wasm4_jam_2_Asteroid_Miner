@@ -8,24 +8,28 @@ import w4 "wasm4"
 // Color ///////////////////////////////////////////////////////////////////////////////////////////
 
 Color :: enum u8 {
+  None = 0,
   Black = 1,
   Gray = 2,
   White = 3,
-  Orange = 4,
+  Red = 4,
   Cyan = 5,
   Green = 6,
   Yellow = 7,
 }
 
-color_map := [Color]u32 {
+color_map := #partial [Color]u32 {
   .Black =  0x101015,
   .Gray =   0x434850,
   .White =  0xF7F5F3,
-  .Orange = 0xE69F00,
+  .Red =    0xF57F20,
   .Cyan =   0x56B4E9,
   .Green =  0x009E73,
   .Yellow = 0xF0E442,
 }
+
+TEAM1_COLOR :: Color.Cyan
+TEAM2_COLOR :: Color.Yellow
 
 // Depth ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -59,6 +63,7 @@ ModelFlag :: enum u8 {
 
 model_asteroid_01 := Model3D(#load("../res/model_asteroid_01.bytes")) // 494 bytes
 model_player_ship := Model3D(#load("../res/model_player_ship.bytes")) // 296 bytes
+model_mine := Model3D(#load("../res/model_mine.bytes")) // 458 bytes
 
 
 
@@ -92,14 +97,41 @@ MATERIAL_ENGINE :: Material{
   options = { .Flicker, .Black_When_Inactive },
 }
 
-MATERIAL_ORANGE_LAMP :: Material{
-  color = .Orange,
+MATERIAL_TEAM1_LAMP :: Material{
+  color = TEAM1_COLOR,
   options = { .Black_When_Inactive },
 }
 
-MATERIAL_CYAN_LAMP :: Material{
-  color = .Cyan,
+MATERIAL_TEAM2_LAMP :: Material{
+  color = TEAM2_COLOR,
   options = { .Black_When_Inactive },
+}
+
+
+sprite_hud_plus := [?]u8{
+  0b_00100001,
+  0b_00111110,
+  0b_01000010,
+}
+
+sprite_hud_home := [?]u8{
+  0b_00000000, 0b_01000000, 0b_00000000, 0b_01100100,
+  0b_00000000, 0b_01101010, 0b_01000000, 0b_01101010,
+  0b_10100100, 0b_01101010, 0b_10101010, 0b_01011010,
+  0b_10101010, 0b_10010101, 0b_10101010, 0b_10010100,
+  0b_01101001, 0b_10100100, 0b_00011010, 0b_01101001,
+  0b_00000101, 0b_01010101, 0b_01000000,
+}
+
+sprite_hud_box := [?]u8{
+  0b_11100111,
+  0b_10000001,
+  0b_10000001,
+  0b_00000000,
+  0b_00000000,
+  0b_10000001,
+  0b_10000001,
+  0b_11100111,
 }
 
 // State ///////////////////////////////////////////////////////////////////////////////////////////
@@ -114,20 +146,22 @@ current_color : Color
 
 // Interface ///////////////////////////////////////////////////////////////////////////////////////
 
+NEAR_CLIP :: 0.5
+FAR_CLIP :: 200
 init_graphics :: proc() {
-  matrix_projection = glm.mat4Perspective(60 * math.RAD_PER_DEG, 1, 0.5, 100)
+  matrix_projection = glm.mat4Perspective(60 * math.RAD_PER_DEG, 1, NEAR_CLIP, FAR_CLIP)
   matrix_view = glm.identity(glm.mat4)
 }
 
 update_pallet :: proc() {
-  CYCLE_LENGTH :: 10
+  CYCLE_LENGTH :: 5
   defer pallet_cycle += 1
 
   if pallet_cycle % CYCLE_LENGTH == 0 {
     pallet_cycle %= 4*CYCLE_LENGTH
     switch pallet_cycle {
       case 0*CYCLE_LENGTH:
-        current_color = Color.Orange
+        current_color = Color.Red
       case 1*CYCLE_LENGTH:
         current_color = Color.Cyan
       case 2*CYCLE_LENGTH:
@@ -169,7 +203,9 @@ LODOptions :: struct {
 
 draw_star :: proc(dir : V3) {
   screen_point := model_to_screen(V4{ dir.x, dir.y, dir.z, 0 })
-  set_pixel(iround(screen_point.x), iround(screen_point.y), .White)
+  if screen_point.z > 0 {
+    set_pixel(iround(screen_point.x), iround(screen_point.y), .White)
+  }
 }
 
 draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotation := Q_ID, size := V3_ONE, lod_options := LODOptions{}) {
@@ -275,7 +311,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
       return false
     }
   }
-  if material_color == .Orange || material_color == .Cyan || material_color == .Green || material_color == .Yellow {
+  if material_color >= .Red {
     if material_color != current_color {
       if .Black_When_Inactive in material.options {
         material_color = .Black
@@ -475,16 +511,16 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
 
         color := material_color
         if .Do_Lighting in material.options {
-          light := u8(255*clamp(0.5*glm.dot(light_dir, frag.norm)+0.5, 0, 1))
+          light := u8(255*ease_quad_out(clamp(0.75*glm.dot(light_dir, frag.norm) + 0.5, 0, 1)))
           threshold := u8(128)
 
           if .Dither_Ordered in material.options {
             noise_idx := (draw_x % ORDERED_NOISE_SIZE) + (ORDERED_NOISE_SIZE*(draw_y % ORDERED_NOISE_SIZE))
-            threshold = ordered_noise[noise_idx]/3 + (128-256/3/2)
+            threshold = ordered_noise[noise_idx]
           } else if .Dither_Blue in material.options {
             offset := int(7*(time/5) % BLUE_NOISE_SIZE)
             noise_idx := (draw_x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((draw_y+offset) % BLUE_NOISE_SIZE))
-            threshold = blue_noise_void_cluster[noise_idx]/3 + (128-256/3/2)
+            threshold = blue_noise_void_cluster[noise_idx]
           }
 
           if light < threshold {
@@ -525,7 +561,7 @@ set_pixel :: proc(#any_int x, y : int, color : Color) {
   }
 
   w4_color := u8(color)
-  if color >= .Orange {
+  if color >= .Red {
     if color != current_color {
       return
     }
@@ -544,6 +580,17 @@ get_vp_mat :: proc() -> glm.mat4 {
   return matrix_projection * matrix_view
 }
 
+model_to_clip :: proc(model : V4) -> V4 {
+  projected_point := matrix_projection * matrix_view * model
+  if projected_point.w != 0 {
+    projected_point.x = projected_point.x / projected_point.w
+    projected_point.y = projected_point.y / projected_point.w
+    projected_point.z = projected_point.z / projected_point.w
+  }
+
+  return projected_point
+}
+
 model_to_screen :: proc(model : V4) -> V3 {
   view_point := matrix_view * model
   projected_point := matrix_projection * view_point
@@ -552,11 +599,14 @@ model_to_screen :: proc(model : V4) -> V3 {
     projected_point.y = projected_point.y / projected_point.w
     projected_point.z = projected_point.z / projected_point.w
   }
+
   projected_point.y = -projected_point.y
   projected_point.x = (projected_point.x + 1) * (w4.SCREEN_SIZE/2)
   projected_point.y = (projected_point.y + 1) * (w4.SCREEN_SIZE/2)
-  projected_point.z = clamp(math.remap(view_point.z, -0.5, -100.0, 0.0, 1.0), -1, 2)
-  projected_point.z = 1 - projected_point.z
-  projected_point.z = 1 - (projected_point.z * projected_point.z * projected_point.z * projected_point.z)
+  if view_point.z > 0 {
+    projected_point.x = -projected_point.x
+    projected_point.y = -projected_point.y
+  }
+  projected_point.z = ease_quad_out(math.remap(view_point.z, -NEAR_CLIP, -FAR_CLIP, 0.0, 1.0))
   return V3(projected_point.xyz)
 }

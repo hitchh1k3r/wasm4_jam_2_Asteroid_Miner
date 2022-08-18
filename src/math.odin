@@ -10,6 +10,8 @@ import glm "core:math/linalg/glsl"
 V2 :: glm.vec2
 V3 :: glm.vec3
 V4 :: glm.vec4
+// Half precision fixed point number (if world is 200x200x200 we have a resolution of 0.0031)
+H3 :: [3]u16
 
 V2_ZERO    :: V2{  0,  0 }
 V2_ONE     :: V2{  1,  1 }
@@ -30,11 +32,22 @@ V3_BACK    :: V3{  0,  0,  1 }
 to_v3 :: proc{ h3_to_v3 }
 
 h3_to_v3 :: proc(v : H3) -> V3 {
-  H_TO_WORLD :: 200.0 / f32(max(u16))
+  H_TO_WORLD :: WORLD_SIZE / f32(max(u16))
   res : V3
-  res.x = f32(v.x) * H_TO_WORLD - 100.0
-  res.y = f32(v.y) * H_TO_WORLD - 100.0
-  res.z = f32(v.z) * H_TO_WORLD - 100.0
+  res.x = f32(v.x) * H_TO_WORLD - WORLD_SIZE/2
+  res.y = f32(v.y) * H_TO_WORLD - WORLD_SIZE/2
+  res.z = f32(v.z) * H_TO_WORLD - WORLD_SIZE/2
+  return res
+}
+
+to_h3 :: proc{ v3_to_h3 }
+
+v3_to_h3 :: proc(v : V3) -> H3 {
+  WORLD_TO_H :: f32(max(u16)) / WORLD_SIZE
+  res : H3
+  res.x = u16((v.x + WORLD_SIZE/2) * WORLD_TO_H)
+  res.y = u16((v.y + WORLD_SIZE/2) * WORLD_TO_H)
+  res.z = u16((v.z + WORLD_SIZE/2) * WORLD_TO_H)
   return res
 }
 
@@ -198,4 +211,9 @@ sin :: proc(angle : f32) -> f32 {
 
 cos :: proc(angle : f32) -> f32 {
   return sin(angle + 0.25*math.TAU)
+}
+
+ease_quad_out :: proc(num : f32) -> f32 {
+  num := 1-num
+  return 1 - num*num
 }
