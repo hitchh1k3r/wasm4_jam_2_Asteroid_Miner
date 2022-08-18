@@ -390,9 +390,11 @@ update :: proc "c" () {
         w4.DRAW_COLORS^ = 0x0003
         w4.text(s, x - i32(4*len(s)), 5)
         if current_color == color {
-          w4.DRAW_COLORS^ = 0x0004
           left := x - 2 - i32(4*len(s))
           width := i32(8*len(s)) + 2
+          w4.DRAW_COLORS^ = 0x0011
+          w4.rect(left-1, 2, width+3, 3)
+          w4.DRAW_COLORS^ = 0x0004
           w4.hline(left, 3, width)
           w4.vline(left, 3, 3)
           w4.vline(left+width, 3, 3)
