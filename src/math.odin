@@ -2,8 +2,20 @@ package main
 
 import "core:math"
 import glm "core:math/linalg/glsl"
+import la "core:math/linalg"
 
-// TODO (hitch) 2022-08-17 Rewrite all the glsl functions to not use array math!
+// Generic /////////////////////////////////////////////////////////////////////////////////////////
+
+RAD_PER_DEG :: math.RAD_PER_DEG
+tan :: math.tan_f32
+sqrt :: math.sqrt_f32
+remap :: math.remap
+round :: math.round_f32
+to_v3 :: proc{ h3_to_v3 }
+to_h3 :: proc{ v3_to_h3 }
+add :: proc{ add_v3 }
+mul :: proc{ quat_mul_v3, quat_mul_quat, scale_v3, mat_mul_v4, mat_mul_mat }
+to_mat :: proc{ quat_to_mat }
 
 // Vectors /////////////////////////////////////////////////////////////////////////////////////////
 
@@ -29,9 +41,7 @@ V3_LEFT    :: V3{ -1,  0,  0 }
 V3_FORWARD :: V3{  0,  0, -1 }
 V3_BACK    :: V3{  0,  0,  1 }
 
-to_v3 :: proc{ h3_to_v3 }
-
-h3_to_v3 :: proc(v : H3) -> V3 {
+h3_to_v3 :: proc "contextless" (v : H3) -> V3 {
   H_TO_WORLD :: WORLD_SIZE / f32(max(u16))
   res : V3
   res.x = f32(v.x) * H_TO_WORLD - WORLD_SIZE/2
@@ -40,9 +50,7 @@ h3_to_v3 :: proc(v : H3) -> V3 {
   return res
 }
 
-to_h3 :: proc{ v3_to_h3 }
-
-v3_to_h3 :: proc(v : V3) -> H3 {
+v3_to_h3 :: proc "contextless" (v : V3) -> H3 {
   WORLD_TO_H :: f32(max(u16)) / WORLD_SIZE
   res : H3
   res.x = u16((v.x + WORLD_SIZE/2) * WORLD_TO_H)
@@ -51,65 +59,159 @@ v3_to_h3 :: proc(v : V3) -> H3 {
   return res
 }
 
+add_v3 :: proc "contextless" (a, b : V3) -> V3 {
+  res := a
+  res.x += b.x
+  res.y += b.y
+  res.z += b.z
+  return res
+}
+
+scale_v3 :: proc "contextless" (s : f32, v : V3) -> V3 {
+  v := v
+  v.x *= s
+  v.y *= s
+  v.z *= s
+  return v
+}
+
+cross :: proc "contextless" (a, b : V3) -> V3 {
+  res : V3
+  res.x = a.y*b.z - b.y*a.z
+  res.y = a.z*b.x - b.z*a.x
+  res.z = a.x*b.y - b.x*a.y
+  return res
+}
+
+dir :: proc "contextless" (a, b : V3) -> V3 {
+  res := b
+  res.x -= a.x
+  res.y -= a.y
+  res.z -= a.z
+  return res
+}
+
+norm_v3 :: proc "contextless" (v : V3) -> V3 {
+  return mul(1.0/sqrt(dot(v, v)), v)
+}
+
+dot :: proc "contextless" (a, b : V3) -> f32 {
+  return a.x*b.x + a.y*b.y + a.z*b.z
+}
+
 // Quaternions /////////////////////////////////////////////////////////////////////////////////////
 
-Q  :: glm.quat
+Quat :: glm.quat
 
-Q_ID       : Q
+Quat_ID : Quat
 
-quat_euler :: proc(euler : V3) -> Q {
+quat_euler :: proc "contextless" (euler : V3) -> (q : Quat) {
   cx, sx := cos(euler.x*0.5), sin(euler.x*0.5)
   cy, sy := cos(euler.y*0.5), sin(euler.y*0.5)
   cz, sz := cos(euler.z*0.5), sin(euler.z*0.5)
 
-  q : Q
-
-  q.x = sx*cy*cz - cx*sy*sz
-  q.y = cx*sy*cz + sx*cy*sz
-  q.z = cx*cy*sz - sx*sy*cz
-  q.w = cx*cy*cz + sx*sy*sz
-
-  return q
+  q.x = (sx*cy*cz - cx*sy*sz)
+  q.y = (cx*sy*cz + sx*cy*sz)
+  q.z = (cx*cy*sz - sx*sy*cz)
+  q.w = (cx*cy*cz + sx*sy*sz)
+  q = norm_quat(q)
+  return
 }
 
-quat_axis_angle :: proc(axis : V3, radians : f32) -> Q {
-  q : Q
-  t := radians*0.5
-  v := glm.normalize(axis) * sin(t)
-  q.x = v.x
-  q.y = v.y
-  q.z = v.z
-  q.w = cos(t)
+quat_mul_v3 :: proc "contextless" (q : Quat, v : V3) -> V3 {
+  _Q4_IJK_R :: struct { ijk: V3, r : f32 }
+  q := transmute(_Q4_IJK_R)(norm_quat(q))
+
+  t := cross(mul(2.0, q.ijk), v)
+  return V3(add(v, add(mul(q.r, t), cross(q.ijk, t))))
+}
+
+quat_mul_quat :: proc "contextless" (lhs, rhs : Quat) -> Quat {
+  return norm_quat(lhs * rhs)
+}
+
+norm_quat :: proc "contextless" (q : Quat) -> Quat {
+  q := q
+  mag := abs(q)
+  if mag != 0 {
+    q.x /= mag
+    q.y /= mag
+    q.z /= mag
+    q.w /= mag
+  } else {
+    q.x = 0
+    q.y = 0
+    q.z = 0
+    q.w = 1
+  }
   return q
 }
 
 // Matrix //////////////////////////////////////////////////////////////////////////////////////////
 
-mat4_rotate :: proc(v : glm.vec3, radians : f32) -> glm.mat4 {
-  c := cos(radians)
-  s := sin(radians)
+Matrix :: glm.mat4
 
-  a := glm.normalize(v)
-  t := a * (1-c)
+mat_scale :: proc "contextless" (scale : V3) -> (m : Matrix) {
+  m[0, 0] = scale.x
+  m[1, 1] = scale.y
+  m[2, 2] = scale.z
+  m[3, 3] = 1
+  return
+}
 
-  rot := glm.mat4(1)
+// TODO (hitch) 2022-08-20 remove this!
+mat_translate :: proc "contextless" (translate : V3) -> (m : Matrix) {
+  m[0, 0] = 1
+  m[1, 1] = 1
+  m[2, 2] = 1
+  m[0, 3] = translate.x
+  m[1, 3] = translate.y
+  m[2, 3] = translate.z
+  m[3, 3] = 1
+  return
+}
 
-  rot[0, 0] = c + t[0]*a[0]
-  rot[1, 0] = 0 + t[0]*a[1] + s*a[2]
-  rot[2, 0] = 0 + t[0]*a[2] - s*a[1]
-  rot[3, 0] = 0
+mat_look :: proc "contextless" (eye, center, up: V3) -> (m : Matrix) {
+  f := norm_v3(dir(eye, center))
+  s := norm_v3(cross(f, up))
+  u := cross(s, f)
 
-  rot[0, 1] = 0 + t[1]*a[0] - s*a[2]
-  rot[1, 1] = c + t[1]*a[1]
-  rot[2, 1] = 0 + t[1]*a[2] + s*a[0]
-  rot[3, 1] = 0
+  fe := dot(f, eye)
 
-  rot[0, 2] = 0 + t[2]*a[0] + s*a[1]
-  rot[1, 2] = 0 + t[2]*a[1] - s*a[0]
-  rot[2, 2] = c + t[2]*a[2]
-  rot[3, 2] = 0
+  m[0, 0] =  s.x
+  m[1, 0] =  u.x
+  m[2, 0] = -f.x
+  m[0, 1] =  s.y
+  m[1, 1] =  u.y
+  m[2, 1] = -f.y
+  m[0, 2] =  s.z
+  m[1, 2] =  u.z
+  m[2, 2] = -f.z
+  m[0, 3] = -dot(s, eye)
+  m[1, 3] = -dot(u, eye)
+  m[2, 3] =  fe
+  m[3, 3] =  1
+  return
+}
 
-  return rot
+mat_mul_v4 :: proc "contextless" (m : Matrix, v : V4) -> V4 {
+  return V4{
+      v.x*m[0, 0] + v.y*m[0, 1] + v.z*m[0, 2] + v.w*m[0, 3],
+      v.x*m[1, 0] + v.y*m[1, 1] + v.z*m[1, 2] + v.w*m[1, 3],
+      v.x*m[2, 0] + v.y*m[2, 1] + v.z*m[2, 2] + v.w*m[2, 3],
+      v.x*m[3, 0] + v.y*m[3, 1] + v.z*m[3, 2] + v.w*m[3, 3],
+    }
+}
+
+quat_to_mat :: glm.mat4FromQuat
+
+mat_mul_mat :: proc "contextless" (lhs, rhs : Matrix) -> (m : Matrix) {
+  for r in 0..<4 {
+    for c in 0..<4 {
+      m[r, c] = lhs[r, 0]*rhs[0, c] + lhs[r, 1]*rhs[1, c] + lhs[r, 2]*rhs[2, c] + lhs[r, 3]*rhs[3, c]
+    }
+  }
+  return
 }
 
 // Triangles ///////////////////////////////////////////////////////////////////////////////////////
@@ -120,7 +222,7 @@ RotationDirection :: enum u8 {
   Counter_Clockwise,
 }
 
-triangle_direction :: proc(a, b, c : V2) -> RotationDirection {
+triangle_direction :: proc "contextless" (a, b, c : V2) -> RotationDirection {
   lhs := b.x*a.y + c.x*b.y + a.x*c.y
   rhs := a.x*b.y + b.x*c.y + c.x*a.y
 
@@ -138,8 +240,8 @@ triangle_direction :: proc(a, b, c : V2) -> RotationDirection {
 SIN_COUNT :: 32
 sin_lookup : [SIN_COUNT]f32
 
-init_math :: proc() {
-  Q_ID.w = 1
+init_math :: proc "contextless" () {
+  Quat_ID.w = 1
   sin_lookup[0] =  math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(0))
   sin_lookup[1] =  math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(1))
   sin_lookup[2] =  math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(2))
@@ -174,11 +276,11 @@ init_math :: proc() {
   sin_lookup[31] = math.sin_f32(0.25*math.TAU / SIN_COUNT * f32(31))
 }
 
-iround :: proc(v : f32) -> int {
-  return int(math.round(v))
+iround :: proc "contextless" (v : f32) -> int {
+  return int(round(v))
 }
 
-sin :: proc(angle : f32) -> f32 {
+sin :: proc "contextless" (angle : f32) -> f32 {
   angle_norm := math.mod(angle, math.TAU)
   if angle_norm < 0 {
     angle_norm += math.TAU
@@ -209,11 +311,11 @@ sin :: proc(angle : f32) -> f32 {
   return (1-fract)*prev_mul*sin_lookup[prev_idx] + fract*next_mul*sin_lookup[next_idx]
 }
 
-cos :: proc(angle : f32) -> f32 {
+cos :: proc "contextless" (angle : f32) -> f32 {
   return sin(angle + 0.25*math.TAU)
 }
 
-ease_quad_out :: proc(num : f32) -> f32 {
+ease_quad_out :: proc "contextless" (num : f32) -> f32 {
   num := 1-num
   return 1 - num*num
 }

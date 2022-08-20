@@ -67,26 +67,25 @@ BlitFlag :: enum u32 {
   Rotate_CCW_90 = 3,
 }
 
-@(default_calling_convention="c")
 foreign wasm4 {
 
-  blit :: proc(sprite : [^]u8, #any_int x, y : i32, #any_int width, height : u32, flags : BlitFlagSet = nil) ---
+  blit :: proc(sprite : [^]u8, x, y : i32, width, height : u32, flags : BlitFlagSet = nil) ---
 
   @(link_name="blitSub")
-  blit_sub :: proc(sprite : [^]u8, #any_int x, y : i32, #any_int width, height : u32, #any_int src_x, src_y : u32, #any_int stride : int, flags : BlitFlagSet = nil) ---
+  blit_sub :: proc(sprite : [^]u8, x, y : i32, width, height : u32, src_x, src_y : u32, stride : int, flags : BlitFlagSet = nil) ---
 
-  line :: proc(#any_int x1, y1, x2, y2 : i32) ---
+  line :: proc(x1, y1, x2, y2 : i32) ---
 
-  hline :: proc(#any_int x, y : i32, #any_int width : u32) ---
+  hline :: proc(x, y : i32, width : u32) ---
 
-  vline :: proc(#any_int x, y : i32, #any_int height : u32) ---
+  vline :: proc(x, y : i32, height : u32) ---
 
-  oval :: proc(#any_int x, y : i32, #any_int width, height : u32) ---
+  oval :: proc(x, y : i32, width, height : u32) ---
 
-  rect :: proc(#any_int x, y : i32, #any_int width, height : u32) ---
+  rect :: proc(x, y : i32, width, height : u32) ---
 
   @(link_name="textUtf8")
-  text :: proc(text : string, #any_int x, y : i32) ---
+  text :: proc(text : string, x, y : i32) ---
 
 }
 
@@ -139,22 +138,22 @@ foreign wasm4 {
 
 tone :: proc{ tone_simple, tone_packed, tone_unpacked }
 
-tone_simple :: proc "c" (channel : ToneChannel,
-                         #any_int freq_hz : u32,
-                         #any_int duration : u32,
-                         #any_int volume : u32,
-                         duty_cycle := ToneDutyCycle.Mode3,
-                         pan := TonePan.Center) {
+tone_simple :: proc "contextless" (channel : ToneChannel,
+                                   freq_hz : u32,
+                                   duration : u32,
+                                   volume : u32,
+                                   duty_cycle := ToneDutyCycle.Mode3,
+                                   pan := TonePan.Center) {
   flags := u32(channel) | u32(duty_cycle) | u32(pan)
   internal_tone(freq_hz, duration, volume, flags)
 }
 
-tone_packed :: proc "c" (channel : ToneChannel,
-                         freq : ToneFrequency,
-                         adsr : ToneADSR,
-                         volume := ToneVolume{ sustain = 100, peak = 0 },
-                         duty_cycle := ToneDutyCycle.Mode3,
-                         pan := TonePan.Center) {
+tone_packed :: proc "contextless" (channel : ToneChannel,
+                                   freq : ToneFrequency,
+                                   adsr : ToneADSR,
+                                   volume := ToneVolume{ sustain = 100, peak = 0 },
+                                   duty_cycle := ToneDutyCycle.Mode3,
+                                   pan := TonePan.Center) {
   flags := u32(channel) | u32(duty_cycle) | u32(pan)
   freq := u32(freq.start_hz) | u32(freq.end_hz)<<16
   adsr := u32(adsr.attack)<<24 | u32(adsr.decay)<<16 | u32(adsr.release)<<8 | u32(adsr.sustain)
@@ -162,12 +161,12 @@ tone_packed :: proc "c" (channel : ToneChannel,
   internal_tone(freq, adsr, volume, flags)
 }
 
-tone_unpacked :: proc "c" (channel : ToneChannel,
-                           #any_int freq_start_hz, freq_end_hz : u32,
-                           #any_int attack_ticks, decay_ticks, sustain_ticks, release_ticks : u32,
-                           #any_int sustain_volume, peak_volume : u32,
-                           duty_cycle := ToneDutyCycle.Mode3,
-                           pan := TonePan.Center) {
+tone_unpacked :: proc "contextless" (channel : ToneChannel,
+                                     freq_start_hz, freq_end_hz : u32,
+                                     attack_ticks, decay_ticks, sustain_ticks, release_ticks : u32,
+                                     sustain_volume, peak_volume : u32,
+                                     duty_cycle := ToneDutyCycle.Mode3,
+                                     pan := TonePan.Center) {
   flags := u32(channel) | u32(duty_cycle) | u32(pan)
   freq := freq_start_hz | freq_end_hz<<16
   adsr := attack_ticks<<24 | decay_ticks<<16 | release_ticks<<8 | sustain_ticks
@@ -177,7 +176,6 @@ tone_unpacked :: proc "c" (channel : ToneChannel,
 
 // Storage Functions ///////////////////////////////////////////////////////////////////////////////
 
-@(default_calling_convention="c")
 foreign wasm4 {
 
   diskr :: proc(dst : rawptr, size : int) -> int ---
@@ -188,7 +186,6 @@ foreign wasm4 {
 
 // Other Functions /////////////////////////////////////////////////////////////////////////////////
 
-@(default_calling_convention="c")
 foreign wasm4 {
 
   @(link_name="traceUtf8")

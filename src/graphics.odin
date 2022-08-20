@@ -1,8 +1,5 @@
 package main
 
-import "core:math"
-import glm "core:math/linalg/glsl"
-
 import w4 "wasm4"
 
 // Color ///////////////////////////////////////////////////////////////////////////////////////////
@@ -22,12 +19,13 @@ color_map := #partial [Color]u32 {
   .Black =  0x101015,
   .Gray =   0x434850,
   .White =  0xF7F5F3,
-  .Red =    0xF57F20,
+  .Red =    0xF55F20,
   .Cyan =   0x56B4E9,
   .Green =  0x009E73,
   .Yellow = 0xF0E442,
 }
 
+FIRST_SPECIAL_COLOR :: Color.Red
 TEAM1_COLOR :: Color.Cyan
 TEAM2_COLOR :: Color.Yellow
 
@@ -35,7 +33,7 @@ TEAM2_COLOR :: Color.Yellow
 
 Depth :: distinct u8
 
-to_depth :: proc(z : f32) -> Depth {
+to_depth :: proc "contextless" (z : f32) -> Depth {
   return Depth(clamp(255*z, 0, 255))
 }
 
@@ -66,7 +64,7 @@ model_player_ship := Model3D(#load("../res/model_player_ship.bytes")) // 296 byt
 model_mine := Model3D(#load("../res/model_mine.bytes")) // 458 bytes
 
 
-
+// TODO (hitch) 2022-08-19 Make materials a single enum with no data
 Material :: struct {
   color : Color,
   options : bit_set[enum u8 { No_Outline, Dither_Ordered, Dither_Blue, Flicker, Do_Lighting, Black_When_Inactive, No_Color_Write, No_Depth_Write }],
@@ -123,6 +121,7 @@ sprite_hud_home := [?]u8{
   0b_00000101, 0b_01010101, 0b_01000000,
 }
 
+/*
 sprite_hud_box := [?]u8{
   0b_11100111,
   0b_10000001,
@@ -133,13 +132,14 @@ sprite_hud_box := [?]u8{
   0b_10000001,
   0b_11100111,
 }
+*/
 
 // State ///////////////////////////////////////////////////////////////////////////////////////////
 
 depth_buffer := ((^[w4.SCREEN_SIZE*w4.SCREEN_SIZE]Depth)(uintptr(MEM_DEPTH_BUFFER)))
 
-matrix_projection : glm.mat4
-matrix_view : glm.mat4
+matrix_projection : Matrix
+matrix_view : Matrix
 
 @(private="file") pallet_cycle : u8
 current_color : Color
@@ -148,12 +148,20 @@ current_color : Color
 
 NEAR_CLIP :: 0.5
 FAR_CLIP :: 200
-init_graphics :: proc() {
-  matrix_projection = glm.mat4Perspective(60 * math.RAD_PER_DEG, 1, NEAR_CLIP, FAR_CLIP)
-  matrix_view = glm.identity(glm.mat4)
+FOV :: 60
+init_graphics :: proc "contextless" () {
+  // Make Projection Matrix
+  {
+    tan_half_fovy := tan(f32(FOV/2.0 * RAD_PER_DEG))
+    matrix_projection[0, 0] = 1.0 / tan_half_fovy
+    matrix_projection[1, 1] = 1.0 / tan_half_fovy
+    matrix_projection[2, 2] = -(FAR_CLIP + NEAR_CLIP) / (FAR_CLIP - NEAR_CLIP)
+    matrix_projection[3, 2] = -1.0
+    matrix_projection[2, 3] = -2.0*FAR_CLIP*NEAR_CLIP / (FAR_CLIP - NEAR_CLIP)
+  }
 }
 
-update_pallet :: proc() {
+update_pallet :: proc "contextless" () {
   CYCLE_LENGTH :: 5
   defer pallet_cycle += 1
 
@@ -173,7 +181,7 @@ update_pallet :: proc() {
   }
 }
 
-clear_depth_buffer :: proc() {
+clear_depth_buffer :: proc "contextless" () {
   for i in 0..<len(depth_buffer) {
     depth_buffer[i] = 0xFF
   }
@@ -181,8 +189,15 @@ clear_depth_buffer :: proc() {
 
 // Drawing /////////////////////////////////////////////////////////////////////////////////////////
 
-DrawOptionSet :: bit_set[DrawOption]
-DrawOption :: enum u8 {
+DrawOptionsSet :: bit_set[DrawOptions; u8]
+DrawOptions :: enum u8 {
+  Border,
+  Reverse_Winding,
+}
+
+// TODO (hitch) 2022-08-19 WHAT DRAW OPTIONS ARE USED?
+TriangleOptionsSet :: bit_set[TriangleOptions; u8]
+TriangleOptions :: enum u8 {
   No_Cull_CW,
   Cull_CCW,
   No_Cull_Depth_Occluded,
@@ -190,7 +205,7 @@ DrawOption :: enum u8 {
   Pixel_Border,
 }
 
-LODCallback :: #type proc(distance : f16, center : V3, rotation : Q, size : V3)
+LODCallback :: #type proc "contextless" (distance : f16)
 
 LODOptions :: struct {
   cutoff_distance : f16,
@@ -201,47 +216,25 @@ LODOptions :: struct {
   border_distance : f16,
 }
 
-draw_star :: proc(dir : V3) {
+draw_star :: proc "contextless" (dir : V3) {
   screen_point := model_to_screen(V4{ dir.x, dir.y, dir.z, 0 })
   if screen_point.z > 0 {
     set_pixel(iround(screen_point.x), iround(screen_point.y), .White)
   }
 }
 
-draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotation := Q_ID, size := V3_ONE, lod_options := LODOptions{}) {
-  rot_mat := glm.mat4FromQuat(rotation)
-  model_matrix := glm.mat4Translate(center) * rot_mat * glm.mat4Scale(size)
+draw_model :: proc "contextless" (model : Model3D, model_matrix : Matrix, radius : f32, materials : []Material, options := DrawOptionsSet{}) {
+  center := V3{ model_matrix[0, 3], model_matrix[1, 3], model_matrix[2, 3] }
+  screen_point := model_to_screen(V4{ center.x, center.y, center.z, 1 })
 
-  cam_cord := matrix_view * V4{ center.x, center.y, center.z, 1 }
-  distance := -f16(cam_cord.z)
-
-  if lod_options.cutoff_distance > 0 && distance > lod_options.cutoff_distance {
-    return
-  }
-
-  screen_point := matrix_projection * cam_cord
-  if screen_point.w != 0 {
-    screen_point = screen_point / screen_point.w
-  }
-  tan_half_fov := math.tan(f32(60.0 * math.RAD_PER_DEG / 2.0))
-  diag := math.sqrt(size.x*size.x + size.y*size.y + size.z*size.z)
-  screen_radius := 0.5 * diag / (f32(distance) * tan_half_fov)
-  if screen_point.x < -1-screen_radius ||
-     screen_point.y < -1-screen_radius ||
-     screen_point.z < -1-screen_radius ||
-     screen_point.x >  1+screen_radius ||
-     screen_point.y >  1+screen_radius ||
-     screen_point.z >  1+screen_radius {
-    return
-  }
-
-  if lod_options.lod_0_distance > 0 && distance > lod_options.lod_0_distance {
-    lod_options.lod_0_callback(distance, center, rotation, size)
-    return
-  }
-
-  if lod_options.lod_1_distance > 0 && distance > lod_options.lod_1_distance {
-    lod_options.lod_1_callback(distance, center, rotation, size)
+  tan_half_fov := tan(60.0 * RAD_PER_DEG / 2.0)
+  screen_radius := w4.SCREEN_SIZE *  0.5*radius / (f32(screen_point.z)*(FAR_CLIP-NEAR_CLIP) * tan_half_fov)
+  if screen_point.x < -screen_radius ||
+     screen_point.y < -screen_radius ||
+     screen_point.z < -screen_radius ||
+     screen_point.x > w4.SCREEN_SIZE+screen_radius ||
+     screen_point.y > w4.SCREEN_SIZE+screen_radius ||
+     screen_point.z > w4.SCREEN_SIZE+screen_radius {
     return
   }
 
@@ -253,15 +246,14 @@ draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotatio
     vert_size += 3
   }
 
-  reverse_culling := ((size.x * size.y * size.z) < 0)
-  fill_options := DrawOptionSet{  }
-  border_options := DrawOptionSet{ .No_Cull_CW, .Cull_CCW }
-  if reverse_culling {
+  fill_options := TriangleOptionsSet{  }
+  border_options := TriangleOptionsSet{ .No_Cull_CW, .Cull_CCW }
+  if .Reverse_Winding in options {
     fill_options, border_options = border_options, fill_options
   }
   border_options |= { .Pixel_Border }
 
-  decode_f32 :: proc(bits : u8) -> f32 {
+  decode_f32 :: proc "contextless" (bits : u8) -> f32 {
     return (f32(bits) / 255.0) - 0.5
   }
 
@@ -272,15 +264,15 @@ draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotatio
     c_idx := vert_size*int(data[2] & 0b01111111)
     material_idx := (data[0] >> 5 & 0b100) | (data[1] >> 6 & 0b010) | (data[2] >> 7 & 0b001)
     a, b, c : Vary
-    a.pos = V3((model_matrix * V4{ decode_f32(model[a_idx + 2]), decode_f32(model[a_idx + 3]), decode_f32(model[a_idx + 4]), 1 }).xyz)
-    b.pos = V3((model_matrix * V4{ decode_f32(model[b_idx + 2]), decode_f32(model[b_idx + 3]), decode_f32(model[b_idx + 4]), 1 }).xyz)
-    c.pos = V3((model_matrix * V4{ decode_f32(model[c_idx + 2]), decode_f32(model[c_idx + 3]), decode_f32(model[c_idx + 4]), 1 }).xyz)
-    face_norm := glm.normalize(glm.cross(b.pos-a.pos, c.pos-a.pos))
+    a.pos = V3(mul(model_matrix, V4{ decode_f32(model[a_idx + 2]), decode_f32(model[a_idx + 3]), decode_f32(model[a_idx + 4]), 1 }).xyz)
+    b.pos = V3(mul(model_matrix, V4{ decode_f32(model[b_idx + 2]), decode_f32(model[b_idx + 3]), decode_f32(model[b_idx + 4]), 1 }).xyz)
+    c.pos = V3(mul(model_matrix, V4{ decode_f32(model[c_idx + 2]), decode_f32(model[c_idx + 3]), decode_f32(model[c_idx + 4]), 1 }).xyz)
+    face_norm := norm_v3(cross(b.pos-a.pos, c.pos-a.pos))
 
     if .Has_Normals in model_flags {
-      a_norm := V3((model_matrix * V4{ decode_f32(model[a_idx + 5]), decode_f32(model[a_idx + 6]), decode_f32(model[a_idx + 7]), 0 }).xyz)
-      b_norm := V3((model_matrix * V4{ decode_f32(model[b_idx + 5]), decode_f32(model[b_idx + 6]), decode_f32(model[b_idx + 7]), 0 }).xyz)
-      c_norm := V3((model_matrix * V4{ decode_f32(model[c_idx + 5]), decode_f32(model[c_idx + 6]), decode_f32(model[c_idx + 7]), 0 }).xyz)
+      a_norm := V3(mul(model_matrix, V4{ decode_f32(model[a_idx + 5]), decode_f32(model[a_idx + 6]), decode_f32(model[a_idx + 7]), 0 }).xyz)
+      b_norm := V3(mul(model_matrix, V4{ decode_f32(model[b_idx + 5]), decode_f32(model[b_idx + 6]), decode_f32(model[b_idx + 7]), 0 }).xyz)
+      c_norm := V3(mul(model_matrix, V4{ decode_f32(model[c_idx + 5]), decode_f32(model[c_idx + 6]), decode_f32(model[c_idx + 7]), 0 }).xyz)
       a.norm = (0.75*a_norm + 0.25*face_norm)
       b.norm = (0.75*b_norm + 0.25*face_norm)
       c.norm = (0.75*c_norm + 0.25*face_norm)
@@ -290,7 +282,7 @@ draw_model :: proc(model : Model3D, center : V3, materials : []Material, rotatio
       c.norm = face_norm
     }
 
-    if .No_Outline not_in materials[material_idx].options && (lod_options.border_distance <= 0 || distance < lod_options.border_distance) {
+    if .Border in options {
       draw_triangle(a, b, c, MATERIAL_OUTLINE, border_options, 0.01)
     }
     draw_triangle(a, b, c, materials[material_idx], fill_options)
@@ -302,7 +294,7 @@ Vary :: struct {
   norm : V3,
 }
 
-draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOptionSet{}, depth_offset := f32(0)) -> bool {
+draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, options := TriangleOptionsSet{}, depth_offset := f32(0)) -> bool {
   material_color := material.color
   if .Flicker in material.options && time % 2 == 0 {
     if .Black_When_Inactive in material.options {
@@ -311,7 +303,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
       return false
     }
   }
-  if material_color >= .Red {
+  if material_color >= FIRST_SPECIAL_COLOR {
     if material_color != current_color {
       if .Black_When_Inactive in material.options {
         material_color = .Black
@@ -321,7 +313,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
     }
   }
 
-  light_dir := glm.normalize(V3{ 1, 4, 2 })
+  light_dir := norm_v3(V3{ 1, 4, 2 })
 
   // Vertex Processing ---------
 
@@ -362,8 +354,8 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
     dnorm : V3,
   }
 
-  make_d_dy :: proc(from, to : Vary) -> Interpolator {
-    dy := max(1, abs(math.round(to.y) - math.round(from.y)))
+  make_d_dy :: proc "contextless" (from, to : Vary) -> Interpolator {
+    dy := max(1, abs(round(to.y) - round(from.y)))
     result : Interpolator
     result.dpos = to.pos
     result.dpos.x = (result.dpos.x - from.pos.x) / dy
@@ -376,8 +368,8 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
     return result
   }
 
-  make_d_dx :: proc(from, to : Vary) -> Interpolator {
-    dx := max(1, abs(math.round(to.x) - math.round(from.x)))
+  make_d_dx :: proc "contextless" (from, to : Vary) -> Interpolator {
+    dx := max(1, abs(round(to.x) - round(from.x)))
     result : Interpolator
     result.dpos = to.pos
     result.dpos.x = (result.dpos.x - from.pos.x) / dx
@@ -390,7 +382,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
     return result
   }
 
-  iterate :: proc(base : Vary, d_dy : Interpolator, steps : int) -> Vary {
+  iterate :: proc "contextless" (base : Vary, d_dy : Interpolator, steps : int) -> Vary {
     dist := f32(steps)
     result := base
     result.pos.x += dist * d_dy.dpos.x
@@ -511,7 +503,7 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
 
         color := material_color
         if .Do_Lighting in material.options {
-          light := u8(255*ease_quad_out(clamp(0.75*glm.dot(light_dir, frag.norm) + 0.5, 0, 1)))
+          light := u8(255*ease_quad_out(clamp(0.75*dot(light_dir, frag.norm) + 0.5, 0, 1)))
           threshold := u8(128)
 
           if .Dither_Ordered in material.options {
@@ -555,13 +547,13 @@ draw_triangle :: proc(a, b, c : Vary, material : Material, options := DrawOption
   return true
 }
 
-set_pixel :: proc(#any_int x, y : int, color : Color) {
+set_pixel :: proc "contextless" (x, y : int, color : Color) {
   if x < 0 || y < 0 || x >= w4.SCREEN_SIZE || y >= w4.SCREEN_SIZE {
     return
   }
 
   w4_color := u8(color)
-  if color >= .Red {
+  if color >= FIRST_SPECIAL_COLOR {
     if color != current_color {
       return
     }
@@ -576,24 +568,22 @@ set_pixel :: proc(#any_int x, y : int, color : Color) {
 
 // Utility /////////////////////////////////////////////////////////////////////////////////////////
 
-get_vp_mat :: proc() -> glm.mat4 {
-  return matrix_projection * matrix_view
-}
-
-model_to_clip :: proc(model : V4) -> V4 {
-  projected_point := matrix_projection * matrix_view * model
+// TODO (hitch) 2022-08-19 If model_to_screen can be done with one mul, have this be the first half!
+model_to_clip :: proc "contextless" (model : V4) -> V3 {
+  projected_point := mul(matrix_projection, mul(matrix_view, model))
   if projected_point.w != 0 {
     projected_point.x = projected_point.x / projected_point.w
     projected_point.y = projected_point.y / projected_point.w
     projected_point.z = projected_point.z / projected_point.w
   }
 
-  return projected_point
+  return V3(projected_point.xyz)
 }
 
-model_to_screen :: proc(model : V4) -> V3 {
-  view_point := matrix_view * model
-  projected_point := matrix_projection * view_point
+// TODO (hitch) 2022-08-19 test getting depth from projected_point, then use one VP mul!
+model_to_screen :: proc "contextless" (model : V4) -> V3 {
+  view_point := mul(matrix_view, model)
+  projected_point := mul(matrix_projection, view_point)
   if projected_point.w != 0 {
     projected_point.x = projected_point.x / projected_point.w
     projected_point.y = projected_point.y / projected_point.w
@@ -607,6 +597,6 @@ model_to_screen :: proc(model : V4) -> V3 {
     projected_point.x = -projected_point.x
     projected_point.y = -projected_point.y
   }
-  projected_point.z = ease_quad_out(math.remap(view_point.z, -NEAR_CLIP, -FAR_CLIP, 0.0, 1.0))
+  projected_point.z = ease_quad_out(remap(view_point.z, -NEAR_CLIP, -FAR_CLIP, 0.0, 1.0))
   return V3(projected_point.xyz)
 }

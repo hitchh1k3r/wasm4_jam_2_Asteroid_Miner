@@ -5,7 +5,7 @@ internal_str_buffer := ((^[MEM_TRANSIENT_DATA_SIZE/size_of(u8)]u8)(uintptr(MEM_T
 
 to_str :: proc{ int_to_str, f32_to_str }
 
-int_to_str :: proc(#any_int num : int, str_buff : []u8 = nil) -> string {
+int_to_str :: proc "c" (num : int, str_buff : []u8 = nil) -> string {
   num := num
   str_buff := str_buff
   if str_buff == nil {
@@ -38,7 +38,7 @@ int_to_str :: proc(#any_int num : int, str_buff : []u8 = nil) -> string {
   return string(str_buff[len(str_buff)-digits:])
 }
 
-f32_to_str :: proc(num : f32, decimals := 2, str_buff : []u8 = nil) -> string {
+f32_to_str :: proc "c" (num : f32, decimals := 2, str_buff : []u8 = nil) -> string {
   f_num := num
   str_buff := str_buff
   if str_buff == nil {
