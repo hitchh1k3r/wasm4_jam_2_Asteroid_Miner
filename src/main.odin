@@ -53,11 +53,13 @@ start :: proc "c" () {
   team_2.score = 1337
 
   level_rand := rand.create(42)
-  for asteroid in asteroids {
-    asteroid.pos.x = u16(rand.uint32(&level_rand))
-    asteroid.pos.y = u16(rand.uint32(&level_rand))
-    asteroid.pos.z = u16(rand.uint32(&level_rand))
-    asteroid.variant = u8(rand.uint32(&level_rand))
+  entity_rand = rand.create(rand.uint64(&level_rand))
+  for _ in 0..<75 {
+    add_entity(EntityAsteroid{
+        pos = {u16(rand.uint32(&level_rand)), u16(rand.uint32(&level_rand)), u16(rand.uint32(&level_rand))},
+        variant = u8(rand.uint32(&level_rand)),
+        state = 0,
+      })
   }
 }
 
@@ -68,6 +70,10 @@ update :: proc "c" () {
 
   time += 1
   player_id = (u8(w4.NETPLAY^) & 0b11)
+
+  if screen_shake > 0 {
+    screen_shake -= 1
+  }
 
   setup_current_player_view_matrix()
 
@@ -85,6 +91,11 @@ update :: proc "c" () {
     update_player(&player, i)
   }
 
+  // for entity, i in entities {
+  for entity_idx := 0; entity_idx < entity_count; entity_idx += 1 {
+    update_entity(&entities[entity_idx], &entity_idx)
+  }
+
   min_base_sq_dist := max(f32)
   min_base_pos : V3
   min_teammate_sq_dist := max(f32)
@@ -92,6 +103,7 @@ update :: proc "c" () {
 
   update_pallet()
   clear_depth_buffer()
+  matrix_VP = mul(matrix_projection, matrix_view)
 
   // STARS
   {
@@ -143,7 +155,7 @@ update :: proc "c" () {
          (pos_offset.y > 0 && players[player_id].pos.y < 0) ||
          (pos_offset.z < 0 && players[player_id].pos.z > 0) ||
          (pos_offset.z > 0 && players[player_id].pos.z < 0) {
-        continue
+        //continue
       }
       _valid_offsets[_valid_offset_count] = pos_offset
       _valid_offset_count += 1
@@ -153,16 +165,39 @@ update :: proc "c" () {
 
   // ASTEROIDS
   {
-    asteroid_matrix := mul(quat_to_mat(quat_euler({ f32(time)/120.0, f32(time)/60.0, f32(time)/90.0 })), mat_scale({ 3, 3, 3 }))
-    for asteroid in asteroids {
-      // TODO (hitch) 2022-08-16 LOD draw Z-Test
+    OFFSETS :: []V3{ {0, 0, 0}, {0, 1, 0}, {-1, 0, 0}, {0, -1, 0}, {1, 0, 0}, {1, 1, 0}, {-1, 1, 0}, {-1, -1, 0}, {1, -1, 0} }
+    norms := []V3{
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[0].x, -OFFSETS[0].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[1].x, -OFFSETS[1].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[2].x, -OFFSETS[2].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[3].x, -OFFSETS[3].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[4].x, -OFFSETS[4].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[0].x, -OFFSETS[5].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[1].x, -OFFSETS[6].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[2].x, -OFFSETS[7].y, 0 })),
+      mul(players[player_id].rotation, norm_v3(V3_BACK+V3{ OFFSETS[3].x, -OFFSETS[8].y, 0 })),
+    }
+    rot_mat := quat_to_mat(quat_euler({ f32(time)/120.0, f32(time)/60.0, f32(time)/90.0 }))
+    asteroid_matrix_scales := []Matrix{
+      mul(rot_mat, mat_scale({ 0.5, 0.5, 0.5 })),
+      mul(rot_mat, mat_scale({ 1,   1,   1   })),
+      mul(rot_mat, mat_scale({ 2,   2,   2   })),
+      mul(rot_mat, mat_scale({ 4,   4,   4   })),
+    }
+    for entity in entities {
+      asteroid, ok := entity.(EntityAsteroid)
+      if !ok {
+        continue
+      }
+      size := (asteroid.variant >> 6) & 0b11
+      asteroid_matrix := asteroid_matrix_scales[size]
       asteroid_pos := to_v3(asteroid.pos)
       for pos_offset in valid_offsets {
         draw_pos := add(asteroid_pos, pos_offset)
         eye := dir(draw_pos, players[player_id].pos)
         sq_dist := dot(eye, eye)
-        if sq_dist < 100*100 {
-          if sq_dist < 80*80 {
+        if sq_dist < 190*190 {
+          if sq_dist < 100*100 {
             options : DrawOptionsSet
             if sq_dist < 25*25 {
               options = { .Border }
@@ -171,46 +206,16 @@ update :: proc "c" () {
             asteroid_matrix[1, 3] = draw_pos.y
             asteroid_matrix[2, 3] = draw_pos.z
             draw_model(model_asteroid_01, asteroid_matrix, sqrt(3 * 3*3), { MATERIAL_ASTEROID }, options)
-          } else if sq_dist < 90*90 {
-            screen_point := model_to_screen(V4{ draw_pos.x, draw_pos.y, draw_pos.z, 1 })
-            if screen_point.z > 0 {
-              x := iround(screen_point.x)
-              y := iround(screen_point.y)
-              if x > 0 && y > 0 {
-                offset := int(7*(time/5) % BLUE_NOISE_SIZE)
-                noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
-                if blue_noise_void_cluster[noise_idx] > 32 {
-                  set_pixel(x, y, .Gray)
-                }
-                noise_idx = ((x+BLUE_NOISE_SIZE-1) % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
-                if blue_noise_void_cluster[noise_idx] > 128 {
-                  set_pixel(x-1, y, .Gray)
-                }
-                noise_idx = ((x+1) % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
-                if blue_noise_void_cluster[noise_idx] > 128 {
-                  set_pixel(x+1, y, .Gray)
-                }
-                noise_idx = (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+BLUE_NOISE_SIZE-1+offset) % BLUE_NOISE_SIZE))
-                if blue_noise_void_cluster[noise_idx] > 128 {
-                  set_pixel(x, y-1, .Gray)
-                }
-                noise_idx = (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+1+offset) % BLUE_NOISE_SIZE))
-                if blue_noise_void_cluster[noise_idx] > 128 {
-                  set_pixel(x, y+1, .Gray)
-                }
-              }
-            }
           } else {
+            count := int(size+1) * iround(remap(sq_dist, 190*190, 100*100, 1, f32(len(OFFSETS)))) / 4
             screen_point := model_to_screen(V4{ draw_pos.x, draw_pos.y, draw_pos.z, 1 })
             if screen_point.z > 0 {
-              x := iround(screen_point.x)
-              y := iround(screen_point.y)
-              if x > 0 && y > 0 {
-                offset := int(7*(time/5) % BLUE_NOISE_SIZE)
-                noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
-                if blue_noise_void_cluster[noise_idx] > 64 {
-                  set_pixel(x, y, .Gray)
+              for offset, i in OFFSETS {
+                if i == count {
+                  break
                 }
+                frag := Vary{ screen_point + offset, norms[i] }
+                draw_fragment(iround(frag.pos.x), iround(frag.pos.y), frag, MATERIAL_ASTEROID, .Gray)
               }
             }
           }
@@ -279,7 +284,7 @@ update :: proc "c" () {
         sq_dist := dot(eye, eye)
         if sq_dist < 190*190 {
           options : DrawOptionsSet
-          if sq_dist < 100*100 {
+          if sq_dist < 50*50 {
             options = { .Border }
           }
           base_matrix[0, 3] = draw_pos.x
@@ -328,8 +333,7 @@ update :: proc "c" () {
         w4.DRAW_COLORS^ = 0x0001
         w4.rect(4, 41, 2, 78)
         w4.DRAW_COLORS^ = 0x0002
-        // TODO (hitch) 2022-08-18 CHECK THIS TIMING
-        if (time/10)%2 == 0 && time%2 == 0 {
+        if time%2 == 0 && players[player_id].speed/0.01 + 1 > f32(time % 10) {
           w4.DRAW_COLORS^ = 0x0003
         }
         height := i32(78*players[player_id].speed)
@@ -423,7 +427,7 @@ hud_compass_icon :: proc "contextless" (world_pos : V3, draw : DrawCallback) {
     }
   }
   eye := dir(world_pos, players[player_id].pos)
-  if dot(eye, eye) > (50*50) || offscreen {
+  if dot(eye, eye) > (75*75) || offscreen {
     clip_point.x = w4.SCREEN_SIZE * (0.5 * clamp(clip_point.x, -0.95, 0.94) + 0.5)
     clip_point.y = w4.SCREEN_SIZE * (1-(0.5 * clamp(clip_point.y, -0.925, 0.94) + 0.5))
     draw(iround(clip_point.x), iround(clip_point.y))

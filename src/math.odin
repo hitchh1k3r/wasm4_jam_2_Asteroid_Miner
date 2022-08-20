@@ -7,6 +7,9 @@ import la "core:math/linalg"
 // Generic /////////////////////////////////////////////////////////////////////////////////////////
 
 RAD_PER_DEG :: math.RAD_PER_DEG
+H_TO_WORLD :: WORLD_SIZE / f32(max(u16))
+WORLD_TO_H :: f32(max(u16)) / WORLD_SIZE
+
 tan :: math.tan_f32
 sqrt :: math.sqrt_f32
 remap :: math.remap
@@ -42,7 +45,6 @@ V3_FORWARD :: V3{  0,  0, -1 }
 V3_BACK    :: V3{  0,  0,  1 }
 
 h3_to_v3 :: proc "contextless" (v : H3) -> V3 {
-  H_TO_WORLD :: WORLD_SIZE / f32(max(u16))
   res : V3
   res.x = f32(v.x) * H_TO_WORLD - WORLD_SIZE/2
   res.y = f32(v.y) * H_TO_WORLD - WORLD_SIZE/2
@@ -51,7 +53,6 @@ h3_to_v3 :: proc "contextless" (v : H3) -> V3 {
 }
 
 v3_to_h3 :: proc "contextless" (v : V3) -> H3 {
-  WORLD_TO_H :: f32(max(u16)) / WORLD_SIZE
   res : H3
   res.x = u16((v.x + WORLD_SIZE/2) * WORLD_TO_H)
   res.y = u16((v.y + WORLD_SIZE/2) * WORLD_TO_H)
@@ -155,18 +156,6 @@ mat_scale :: proc "contextless" (scale : V3) -> (m : Matrix) {
   m[0, 0] = scale.x
   m[1, 1] = scale.y
   m[2, 2] = scale.z
-  m[3, 3] = 1
-  return
-}
-
-// TODO (hitch) 2022-08-20 remove this!
-mat_translate :: proc "contextless" (translate : V3) -> (m : Matrix) {
-  m[0, 0] = 1
-  m[1, 1] = 1
-  m[2, 2] = 1
-  m[0, 3] = translate.x
-  m[1, 3] = translate.y
-  m[2, 3] = translate.z
   m[3, 3] = 1
   return
 }

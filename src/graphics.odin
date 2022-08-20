@@ -138,8 +138,13 @@ sprite_hud_box := [?]u8{
 
 depth_buffer := ((^[w4.SCREEN_SIZE*w4.SCREEN_SIZE]Depth)(uintptr(MEM_DEPTH_BUFFER)))
 
+light_dir : V3
+
 matrix_projection : Matrix
 matrix_view : Matrix
+matrix_VP : Matrix
+
+screen_shake : u8
 
 @(private="file") pallet_cycle : u8
 current_color : Color
@@ -150,6 +155,9 @@ NEAR_CLIP :: 0.5
 FAR_CLIP :: 200
 FOV :: 60
 init_graphics :: proc "contextless" () {
+  // TODO (hitch) 2022-08-20 NUKE CONTEXT
+  context = {}
+  light_dir = norm_v3(V3{ 1, 4, 2 })
   // Make Projection Matrix
   {
     tan_half_fovy := tan(f32(FOV/2.0 * RAD_PER_DEG))
@@ -313,8 +321,6 @@ draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, option
     }
   }
 
-  light_dir := norm_v3(V3{ 1, 4, 2 })
-
   // Vertex Processing ---------
 
   a_norm := a.norm
@@ -324,6 +330,9 @@ draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, option
   a := model_to_screen(V4{ a.x, a.y, a.z, 1 })
   b := model_to_screen(V4{ b.x, b.y, b.z, 1 })
   c := model_to_screen(V4{ c.x, c.y, c.z, 1 })
+  a.z += depth_offset
+  b.z += depth_offset
+  c.z += depth_offset
 
   if (a.x < 0 && b.x < 0 && c.x < 0) ||
      (a.x >= w4.SCREEN_SIZE && b.x >= w4.SCREEN_SIZE && c.x >= w4.SCREEN_SIZE) ||
@@ -491,42 +500,7 @@ draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, option
     }
     for draw_x in max(0, left_px)..=min(w4.SCREEN_SIZE-1, right_px) {
       frag := iterate(row_left, row_dx, row_step)
-      if frag.z >= 0 && frag.z <= 1 {
-        depth := to_depth(frag.z+depth_offset)
-        depth_idx := draw_x + w4.SCREEN_SIZE*draw_y
-        if .No_Cull_Depth_Occluded not_in options && depth >= depth_buffer[depth_idx] {
-          continue
-        }
-        if .Cull_Depth_Front in options && depth <= depth_buffer[depth_idx] {
-          continue
-        }
-
-        color := material_color
-        if .Do_Lighting in material.options {
-          light := u8(255*ease_quad_out(clamp(0.75*dot(light_dir, frag.norm) + 0.5, 0, 1)))
-          threshold := u8(128)
-
-          if .Dither_Ordered in material.options {
-            noise_idx := (draw_x % ORDERED_NOISE_SIZE) + (ORDERED_NOISE_SIZE*(draw_y % ORDERED_NOISE_SIZE))
-            threshold = ordered_noise[noise_idx]
-          } else if .Dither_Blue in material.options {
-            offset := int(7*(time/5) % BLUE_NOISE_SIZE)
-            noise_idx := (draw_x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((draw_y+offset) % BLUE_NOISE_SIZE))
-            threshold = blue_noise_void_cluster[noise_idx]
-          }
-
-          if light < threshold {
-            color = .Black
-          }
-        }
-
-        if .No_Color_Write not_in material.options {
-          set_pixel(draw_x, draw_y, color)
-        }
-        if .No_Depth_Write not_in material.options {
-          depth_buffer[depth_idx] = depth
-        }
-      }
+      draw_fragment(draw_x, draw_y, frag, material, material_color)
       row_step += 1
     }
 
@@ -545,6 +519,44 @@ draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, option
   }
 
   return true
+}
+
+draw_fragment :: proc "contextless" (x, y : int, frag : Vary, material : Material, color : Color) {
+  color := color
+  if x >= 0 && x < w4.SCREEN_SIZE &&
+     y >= 0 && y < w4.SCREEN_SIZE &&
+     frag.z >= 0 && frag.z <= 1 {
+    depth := to_depth(frag.z)
+    depth_idx := x + w4.SCREEN_SIZE*y
+    if depth >= depth_buffer[depth_idx] {
+      return
+    }
+
+    if .Do_Lighting in material.options {
+      light := u8(255*ease_quad_out(clamp(0.75*dot(light_dir, frag.norm) + 0.5, 0, 1)))
+      threshold := u8(128)
+
+      if .Dither_Ordered in material.options {
+        noise_idx := (x % ORDERED_NOISE_SIZE) + (ORDERED_NOISE_SIZE*(y % ORDERED_NOISE_SIZE))
+        threshold = ordered_noise[noise_idx]
+      } else if .Dither_Blue in material.options {
+        offset := int(7*(time/5) % BLUE_NOISE_SIZE)
+        noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
+        threshold = blue_noise_void_cluster[noise_idx]
+      }
+
+      if light < threshold {
+        color = .Black
+      }
+    }
+
+    if .No_Color_Write not_in material.options {
+      set_pixel(x, y, color)
+    }
+    if .No_Depth_Write not_in material.options {
+      depth_buffer[depth_idx] = depth
+    }
+  }
 }
 
 set_pixel :: proc "contextless" (x, y : int, color : Color) {
@@ -568,9 +580,8 @@ set_pixel :: proc "contextless" (x, y : int, color : Color) {
 
 // Utility /////////////////////////////////////////////////////////////////////////////////////////
 
-// TODO (hitch) 2022-08-19 If model_to_screen can be done with one mul, have this be the first half!
 model_to_clip :: proc "contextless" (model : V4) -> V3 {
-  projected_point := mul(matrix_projection, mul(matrix_view, model))
+  projected_point := mul(matrix_VP, model)
   if projected_point.w != 0 {
     projected_point.x = projected_point.x / projected_point.w
     projected_point.y = projected_point.y / projected_point.w
@@ -580,15 +591,9 @@ model_to_clip :: proc "contextless" (model : V4) -> V3 {
   return V3(projected_point.xyz)
 }
 
-// TODO (hitch) 2022-08-19 test getting depth from projected_point, then use one VP mul!
 model_to_screen :: proc "contextless" (model : V4) -> V3 {
   view_point := mul(matrix_view, model)
-  projected_point := mul(matrix_projection, view_point)
-  if projected_point.w != 0 {
-    projected_point.x = projected_point.x / projected_point.w
-    projected_point.y = projected_point.y / projected_point.w
-    projected_point.z = projected_point.z / projected_point.w
-  }
+  projected_point := model_to_clip(model)
 
   projected_point.y = -projected_point.y
   projected_point.x = (projected_point.x + 1) * (w4.SCREEN_SIZE/2)
@@ -598,5 +603,5 @@ model_to_screen :: proc "contextless" (model : V4) -> V3 {
     projected_point.y = -projected_point.y
   }
   projected_point.z = ease_quad_out(remap(view_point.z, -NEAR_CLIP, -FAR_CLIP, 0.0, 1.0))
-  return V3(projected_point.xyz)
+  return projected_point
 }

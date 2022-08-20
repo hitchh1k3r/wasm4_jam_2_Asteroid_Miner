@@ -1,14 +1,13 @@
 package main
 
+import "core:math/rand"
+
 import w4 "wasm4"
 
+entity_rand : rand.Rand
 players := (^[4]EntityPlayer)(uintptr(MEM_PLAYERS))
-asteroids := (^[1024]EntityAsteroid)(uintptr(MEM_ASTEROIDS))
-// 16 asteroids per 50x50x50 unit tile
-// 1024 max asteroids
-// 0b_HH_llllll
-// start_offset := 16 * HH
-// tile_count := 0..15
+entities := (^[1024]EntityUnion)(uintptr(MEM_ENTITIES))
+entity_count : int
 
 // Player Ship /////////////////////////////////////////////////////////////////////////////////////
 
@@ -37,7 +36,12 @@ setup_current_player_view_matrix :: proc "contextless" () {
   look_up := mul(players[player_id].rotation, V3_UP)
 
   matrix_view = mat_look(look_from, look_at, look_up)
-  
+
+  if screen_shake > 0 {
+    // TODO (hitch) 2022-08-20 NUKE CONTEXT
+    context = {}
+    matrix_view = mul(quat_to_mat(quat_euler({ 0, 0, rand.float32(&graphics_rand)*f32(screen_shake)/60 })), matrix_view)
+  }
 }
 
 current_player_color :: proc "contextless" () -> Color {
@@ -130,10 +134,139 @@ offset_player :: proc "contextless" (using player : ^EntityPlayer, offset : V3) 
   setup_current_player_view_matrix()
 }
 
+// Entities //////////////////////////////////////////////////////////////////////////////////////
+
+EntityUnion :: union {
+  EntityAsteroid,
+}
+
+add_entity :: proc "contextless" (entity : EntityUnion) -> bool {
+  if entity_count < len(entities) {
+    entities[entity_count] = entity
+    entity_count += 1
+    return true
+  }
+  return false
+}
+
+remove_entity :: proc "contextless" (idx : int) {
+  // assert(entity_count > idx)
+
+  entities[idx] = entities[entity_count]
+  entity_count -= 1
+}
+
+update_entity :: proc "contextless" (entity : ^EntityUnion, entity_idx : ^int) {
+  switch entity in entity {
+    case EntityAsteroid:
+      update_asteroid(&entity, entity_idx)
+  }
+}
+
 // Asteroid ////////////////////////////////////////////////////////////////////////////////////////
 
 EntityAsteroid :: struct { // 8 bytes
   pos : H3,                //   6 bytes
-  occupancy : u8,          //   1 byte   // 0b__E?SSSSSS  E=enabled  S=partition protrusions
-  variant : u8,            //   1 byte   // 0b__VVVSTTTT  V=direction  S=size  T=rotation time offset
+  variant : u8,            //   1 byte   // 0b__SSVVVVVV  V=velocity  S=size
+  state : u8,              //   1 byte   // 0b__???IIIII  I=invincibility
+}
+
+update_asteroid :: proc "contextless" (using asteroid : ^EntityAsteroid, entity_idx : ^int) {
+  MoveDirection :: enum u8 { D_1, D_2, D_3, D_4, D_5, D_6 }
+  MoveDirectionSet :: bit_set[MoveDirection; u8]
+  velocity_dirs := [MoveDirection][3]i32 {
+    .D_1 = {  19,  -4, -12 },
+    .D_2 = { -11, -20,  12 },
+    .D_3 = { -13,   2,  -9 },
+    .D_4 = {  10,  19,  11 },
+    .D_5 = {  -1,   8,  13 },
+    .D_6 = {  -7,  17,   7 },
+  }
+  velocity_set := transmute(MoveDirectionSet)(variant & 0b00111111)
+  velocity : [3]i32
+  for offset, direction in velocity_dirs {
+    if direction in velocity_set {
+      velocity.x += offset.x
+      velocity.y += offset.y
+      velocity.z += offset.z
+    }
+  }
+
+  size := i32((variant & 0b__11_000000) >> 6)
+
+  H_SIZE :: 65536
+  pos.x = u16((i32(pos.x) + H_SIZE + velocity.x/(size+1)) % H_SIZE)
+  pos.y = u16((i32(pos.y) + H_SIZE + velocity.y/(size+1)) % H_SIZE)
+  pos.z = u16((i32(pos.z) + H_SIZE + velocity.z/(size+1)) % H_SIZE)
+
+  destroy := false
+  spawn := false
+
+  invincibility := state & 0b__000_11111
+  if invincibility > 0 {
+    invincibility -= 1
+    state = (state & 0b__111_00000) | invincibility
+  } else {
+    if invincibility == 0 && test_overlap(pos, u8(size), to_h3(players[0].pos), 2) {
+      players[0].health = players[0].health - min(120, players[0].health)
+      screen_shake = max(30, screen_shake)
+      destroy = true
+      spawn = true
+    }
+    for other_idx := entity_idx^+1; other_idx < entity_count; other_idx += 1 {
+      switch entity in entities[other_idx] {
+        case EntityAsteroid:
+          // DO COLLISION
+      }
+    }
+  }
+
+  spawn_pos := pos
+  if destroy {
+    remove_entity(entity_idx^)
+    entity_idx^ -= 1
+  }
+
+  if spawn && size > 0 {
+    // TODO (hitch) 2022-08-20 NUKE CONTEXT
+    context = {}
+    variant : u8
+
+    variant = (u8(rand.uint32(&entity_rand)) & 0b__00_111111) | (u8(size-1) << 6)
+    add_entity(EntityAsteroid{ spawn_pos, variant, 31 })
+
+    variant = (u8(rand.uint32(&entity_rand)) & 0b__00_111111) | (u8(size-1) << 6)
+    add_entity(EntityAsteroid{ spawn_pos, variant, 31 })
+  }
+
+  test_overlap :: proc "contextless" (asteroid_pos : H3, asteroid_size : u8, other_pos : H3, other_size : u8) -> bool {
+    // TODO (hitch) 2022-08-20 Collision misses offten
+    radius := f32(0)
+    switch asteroid_size {
+      case 0:
+        radius += 0.5
+      case 1:
+        radius += 1
+      case 2:
+        radius += 2
+      case 3:
+        radius += 4
+    }
+    switch other_size {
+      case 0:
+        radius += 0.5
+      case 1:
+        radius += 1
+      case 2:
+        radius += 2
+      case 3:
+        radius += 4
+    }
+    radius *= WORLD_TO_H
+    dx := f32(asteroid_pos.x - other_pos.x)
+    dy := f32(asteroid_pos.y - other_pos.y)
+    dz := f32(asteroid_pos.z - other_pos.z)
+    sq_dist := dx*dx + dy*dy + dz*dz
+    return sq_dist < radius*radius
+  }
 }
