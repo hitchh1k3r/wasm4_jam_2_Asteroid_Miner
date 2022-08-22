@@ -1,0 +1,16 @@
+[package]
+name = "hitchh1k3r/asteroids-3000"
+version = "1.0.0"
+description = "A NETPLAY space flight battle arena."
+readme = "README.md"
+
+[[module]]
+name = "game"
+source = "game.wasm"
+abi = "wasm4"
+interfaces = { wasm4 = "0.0.1" }
+
+[[command]]
+runner = "wasm4@0.0.1"
+name = "play"
+module = "game"
