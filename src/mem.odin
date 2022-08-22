@@ -14,7 +14,7 @@ MEM_STACK_LAST                  :: 0x1EDF // 7376 stack size, can overrun wasm4'
 MEM_GLOBAL_MEMORY               :: 0x1EE0
 
 MEM_PLAYERS                     :: MEM_ENTITIES - size_of([4]EntityPlayer)
-MEM_ENTITIES                    :: MEM_DEPTH_BUFFER - size_of([1024]EntityAsteroid)
+MEM_ENTITIES                    :: MEM_DEPTH_BUFFER - size_of([MAX_ENTITIES]EntityUnion)
 
 MEM_DEPTH_BUFFER                :: MEM_TRANSIENT_DATA - size_of([w4.SCREEN_SIZE*w4.SCREEN_SIZE]Depth)
 

@@ -19,7 +19,7 @@ color_map := #partial [Color]u32 {
   .Black =  0x101015,
   .Gray =   0x434850,
   .White =  0xF7F5F3,
-  .Red =    0xF55F20,
+  .Red =    0xF53F20,
   .Cyan =   0x56B4E9,
   .Green =  0x009E73,
   .Yellow = 0xF0E442,
@@ -59,52 +59,34 @@ ModelFlag :: enum u8 {
   Has_Normals = 0,
 }
 
+model_cube := Model3D(#load("../res/model_cube.bytes")) // 62 bytes
 model_asteroid_01 := Model3D(#load("../res/model_asteroid_01.bytes")) // 494 bytes
+model_asteroid_02 := Model3D(#load("../res/model_asteroid_02.bytes")) // 494 bytes
 model_player_ship := Model3D(#load("../res/model_player_ship.bytes")) // 296 bytes
 model_mine := Model3D(#load("../res/model_mine.bytes")) // 458 bytes
+model_space_station_cap := Model3D(#load("../res/model_space_station_cap.bytes")) // 656 bytes
+model_space_station_center := Model3D(#load("../res/model_space_station_center.bytes")) // 440 bytes
 
-
-// TODO (hitch) 2022-08-19 Make materials a single enum with no data
-Material :: struct {
-  color : Color,
-  options : bit_set[enum u8 { No_Outline, Dither_Ordered, Dither_Blue, Flicker, Do_Lighting, Black_When_Inactive, No_Color_Write, No_Depth_Write }],
+Material :: enum u8 {
+  None,
+  Asteroid,
+  Metal,
+  Engine,
+  Physic,
+  Outline,
+  Black,
+  White,
+  Laser,
+  Trail,
+  Light_Mine,
+  Light_HUD_Team1,
+  Light_HUD_Team2,
+  Light_Black_Team1,
+  Light_Black_Team2,
+  Light_White_Team1,
+  Light_White_Team2,
+  Death,
 }
-
-MATERIAL_OUTLINE :: Material{
-  color = .White,
-  options = { .No_Outline },
-}
-
-MATERIAL_ASTEROID :: Material{
-  color = .Gray,
-  options = { .Dither_Blue, .Do_Lighting },
-}
-
-MATERIAL_METAL :: Material{
-  color = .Gray,
-  options = { .Dither_Ordered, .Do_Lighting },
-}
-
-MATERIAL_BLACK :: Material{
-  color = .Black,
-  options = { },
-}
-
-MATERIAL_ENGINE :: Material{
-  color = .White,
-  options = { .Flicker, .Black_When_Inactive },
-}
-
-MATERIAL_TEAM1_LAMP :: Material{
-  color = TEAM1_COLOR,
-  options = { .Black_When_Inactive },
-}
-
-MATERIAL_TEAM2_LAMP :: Material{
-  color = TEAM2_COLOR,
-  options = { .Black_When_Inactive },
-}
-
 
 sprite_hud_plus := [?]u8{
   0b_00100001,
@@ -139,6 +121,7 @@ sprite_hud_box := [?]u8{
 depth_buffer := ((^[w4.SCREEN_SIZE*w4.SCREEN_SIZE]Depth)(uintptr(MEM_DEPTH_BUFFER)))
 
 light_dir : V3
+rendering_pysic_density : f32
 
 matrix_projection : Matrix
 matrix_view : Matrix
@@ -155,8 +138,6 @@ NEAR_CLIP :: 0.5
 FAR_CLIP :: 200
 FOV :: 60
 init_graphics :: proc "contextless" () {
-  // TODO (hitch) 2022-08-20 NUKE CONTEXT
-  context = {}
   light_dir = norm_v3(V3{ 1, 4, 2 })
   // Make Projection Matrix
   {
@@ -201,6 +182,7 @@ DrawOptionsSet :: bit_set[DrawOptions; u8]
 DrawOptions :: enum u8 {
   Border,
   Reverse_Winding,
+  No_Backface_Culling,
 }
 
 // TODO (hitch) 2022-08-19 WHAT DRAW OPTIONS ARE USED?
@@ -260,6 +242,9 @@ draw_model :: proc "contextless" (model : Model3D, model_matrix : Matrix, radius
     fill_options, border_options = border_options, fill_options
   }
   border_options |= { .Pixel_Border }
+  if .No_Backface_Culling in options {
+    fill_options |= { .No_Cull_CW }
+  }
 
   decode_f32 :: proc "contextless" (bits : u8) -> f32 {
     return (f32(bits) / 255.0) - 0.5
@@ -291,7 +276,7 @@ draw_model :: proc "contextless" (model : Model3D, model_matrix : Matrix, radius
     }
 
     if .Border in options {
-      draw_triangle(a, b, c, MATERIAL_OUTLINE, border_options, 0.01)
+      draw_triangle(a, b, c, .Outline, border_options, 0.01)
     }
     draw_triangle(a, b, c, materials[material_idx], fill_options)
   }
@@ -302,22 +287,232 @@ Vary :: struct {
   norm : V3,
 }
 
-draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, options := TriangleOptionsSet{}, depth_offset := f32(0)) -> bool {
-  material_color := material.color
-  if .Flicker in material.options && time % 2 == 0 {
-    if .Black_When_Inactive in material.options {
-      material_color = .Black
-    } else {
-      return false
+@(private="file")
+Interpolator :: struct {
+  dpos :  V3,
+  dnorm : V3,
+}
+
+@(private="file")
+make_d_dy :: proc "contextless" (from, to : Vary) -> Interpolator {
+  dy := max(1, abs(round(to.y) - round(from.y)))
+  result : Interpolator
+  result.dpos = to.pos
+  result.dpos.x = (result.dpos.x - from.pos.x) / dy
+  result.dpos.y = (result.dpos.y - from.pos.y) / dy
+  result.dpos.z = (result.dpos.z - from.pos.z) / dy
+  result.dnorm = to.norm
+  result.dnorm.x = (result.dnorm.x - from.norm.x) / dy
+  result.dnorm.y = (result.dnorm.y - from.norm.y) / dy
+  result.dnorm.z = (result.dnorm.z - from.norm.z) / dy
+  return result
+}
+
+@(private="file")
+make_d_dx :: proc "contextless" (from, to : Vary) -> Interpolator {
+  dx := max(1, abs(round(to.x) - round(from.x)))
+  result : Interpolator
+  result.dpos = to.pos
+  result.dpos.x = (result.dpos.x - from.pos.x) / dx
+  result.dpos.y = (result.dpos.y - from.pos.y) / dx
+  result.dpos.z = (result.dpos.z - from.pos.z) / dx
+  result.dnorm = to.norm
+  result.dnorm.x = (result.dnorm.x - from.norm.x) / dx
+  result.dnorm.y = (result.dnorm.y - from.norm.y) / dx
+  result.dnorm.z = (result.dnorm.z - from.norm.z) / dx
+  return result
+}
+
+@(private="file")
+iterate :: proc "contextless" (base : Vary, d_dy : Interpolator, steps : int) -> Vary {
+  dist := f32(steps)
+  result := base
+  result.pos.x += dist * d_dy.dpos.x
+  result.pos.y += dist * d_dy.dpos.y
+  result.pos.z += dist * d_dy.dpos.z
+  result.norm.x += dist * d_dy.dnorm.x
+  result.norm.y += dist * d_dy.dnorm.y
+  result.norm.z += dist * d_dy.dnorm.z
+  return result
+}
+
+draw_line :: proc "contextless" (a, b : Vary, material : Material, depth_offset := f32(0)) {
+  // TODO (hitch) 2022-08-20 FUNCTION CANDITATE:
+  material_color : Color
+  {
+    switch material {
+      case .None:
+        return
+      case .Asteroid:
+        material_color = .Gray
+      case .Metal:
+        material_color = .Gray
+      case .Engine:
+        material_color = ((time % 2) == 0) ? .White : .Black
+      case .Physic:
+        material_color = .Green
+        if current_color != material_color {
+          return
+        }
+      case .Outline:
+        material_color = .White
+      case .Black:
+        material_color = .Black
+      case .White:
+        material_color = .White
+      case .Laser:
+        if (time % 2) == 0 {
+          material_color = (current_color == .Red) ? .Red : .White
+        } else {
+          return
+        }
+      case .Trail:
+        material_color = .White
+      case .Light_Mine:
+        material_color = (current_color == .Red) ? .Red : .Black
+      case .Light_HUD_Team1:
+        material_color = TEAM1_COLOR
+        if current_color != material_color {
+          return
+        }
+      case .Light_HUD_Team2:
+        material_color = TEAM2_COLOR
+        if current_color != material_color {
+          return
+        }
+      case .Light_Black_Team1:
+        material_color = (current_color == TEAM1_COLOR) ? TEAM1_COLOR : .Black
+      case .Light_Black_Team2:
+        material_color = (current_color == TEAM2_COLOR) ? TEAM2_COLOR : .Black
+      case .Light_White_Team1:
+        material_color = (current_color == TEAM1_COLOR) ? TEAM1_COLOR : .White
+      case .Light_White_Team2:
+        material_color = (current_color == TEAM2_COLOR) ? TEAM2_COLOR : .White
+      case .Death:
+        material_color = .Black
     }
   }
-  if material_color >= FIRST_SPECIAL_COLOR {
-    if material_color != current_color {
-      if .Black_When_Inactive in material.options {
-        material_color = .Black
-      } else {
+
+  // Vertex Processing ---------
+
+  a := a
+  b := b
+
+  a.pos = model_to_screen(V4{ a.pos.x, a.pos.y, a.pos.z, 1 })
+  b.pos = model_to_screen(V4{ b.pos.x, b.pos.y, b.pos.z, 1 })
+  a.pos.z += depth_offset
+  b.pos.z += depth_offset
+
+  if (a.pos.x < 0 && b.pos.x < 0) ||
+     (a.pos.x >= w4.SCREEN_SIZE && b.pos.x >= w4.SCREEN_SIZE) ||
+     (a.pos.y < 0 && b.pos.y < 0) ||
+     (a.pos.y >= w4.SCREEN_SIZE && b.pos.y >= w4.SCREEN_SIZE) ||
+     (a.pos.z < 0 || b.pos.z < 0) ||
+     (a.pos.z > 1 || b.pos.z > 1) {
+      return
+  }
+
+  // Rasterization -------------
+
+  if abs(a.pos.x - b.pos.x) > abs(a.pos.y - b.pos.y) {
+    left, right : Vary
+    if (a.pos.x < b.pos.x) {
+      left, right = a, b
+    } else {
+      left, right = b, a
+    }
+    interp := make_d_dx(left, right)
+    steps := 0
+
+    left_px := iround(left.pos.x)
+    if left_px < 0 {
+      steps = -left_px
+      left_px = 0
+    }
+
+    for x in left_px..=min(iround(right.pos.x), w4.SCREEN_SIZE-1) {
+      frag := iterate(left, interp, steps)
+      draw_fragment(x, iround(frag.pos.y), frag, material, material_color)
+      steps += 1
+    }
+  } else {
+    top, bottom : Vary
+    if (a.pos.y < b.pos.y) {
+      top, bottom = a, b
+    } else {
+      top, bottom = b, a
+    }
+    interp := make_d_dy(top, bottom)
+    steps := 0
+
+    top_px := iround(top.pos.y)
+    if top_px < 0 {
+      steps = -top_px
+      top_px = 0
+    }
+
+    for y in top_px..=min(iround(bottom.pos.y), w4.SCREEN_SIZE-1) {
+      frag := iterate(top, interp, steps)
+      draw_fragment(iround(frag.pos.x), y, frag, material, material_color)
+      steps += 1
+    }
+  }
+}
+
+draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, options := TriangleOptionsSet{}, depth_offset := f32(0)) -> bool {
+  // TODO (hitch) 2022-08-20 FUNCTION CANDITATE:
+  material_color : Color
+  {
+    switch material {
+      case .None:
         return false
-      }
+      case .Asteroid:
+        material_color = .Gray
+      case .Metal:
+        material_color = .Gray
+      case .Engine:
+        material_color = ((time % 2) == 0) ? .White : .Black
+      case .Physic:
+        material_color = .Green
+        if current_color != material_color {
+          return false
+        }
+      case .Outline:
+        material_color = .White
+      case .Black:
+        material_color = .Black
+      case .White:
+        material_color = .White
+      case .Laser:
+        if (time % 2) == 0 {
+          material_color = (current_color == .Red) ? .Red : .White
+        } else {
+          return false
+        }
+      case .Trail:
+        material_color = .White
+      case .Light_Mine:
+        material_color = (current_color == .Red) ? .Red : .Black
+      case .Light_HUD_Team1:
+        material_color = TEAM1_COLOR
+        if current_color != material_color {
+          return false
+        }
+      case .Light_HUD_Team2:
+        material_color = TEAM2_COLOR
+        if current_color != material_color {
+          return false
+        }
+      case .Light_Black_Team1:
+        material_color = (current_color == TEAM1_COLOR) ? TEAM1_COLOR : .Black
+      case .Light_Black_Team2:
+        material_color = (current_color == TEAM2_COLOR) ? TEAM2_COLOR : .Black
+      case .Light_White_Team1:
+        material_color = (current_color == TEAM1_COLOR) ? TEAM1_COLOR : .White
+      case .Light_White_Team2:
+        material_color = (current_color == TEAM2_COLOR) ? TEAM2_COLOR : .White
+      case .Death:
+        material_color = .Black
     }
   }
 
@@ -357,51 +552,6 @@ draw_triangle :: proc "contextless" (a, b, c : Vary, material : Material, option
   }
 
   // Rasterization -------------
-
-  Interpolator :: struct {
-    dpos :  V3,
-    dnorm : V3,
-  }
-
-  make_d_dy :: proc "contextless" (from, to : Vary) -> Interpolator {
-    dy := max(1, abs(round(to.y) - round(from.y)))
-    result : Interpolator
-    result.dpos = to.pos
-    result.dpos.x = (result.dpos.x - from.pos.x) / dy
-    result.dpos.y = (result.dpos.y - from.pos.y) / dy
-    result.dpos.z = (result.dpos.z - from.pos.z) / dy
-    result.dnorm = to.norm
-    result.dnorm.x = (result.dnorm.x - from.norm.x) / dy
-    result.dnorm.y = (result.dnorm.y - from.norm.y) / dy
-    result.dnorm.z = (result.dnorm.z - from.norm.z) / dy
-    return result
-  }
-
-  make_d_dx :: proc "contextless" (from, to : Vary) -> Interpolator {
-    dx := max(1, abs(round(to.x) - round(from.x)))
-    result : Interpolator
-    result.dpos = to.pos
-    result.dpos.x = (result.dpos.x - from.pos.x) / dx
-    result.dpos.y = (result.dpos.y - from.pos.y) / dx
-    result.dpos.z = (result.dpos.z - from.pos.z) / dx
-    result.dnorm = to.norm
-    result.dnorm.x = (result.dnorm.x - from.norm.x) / dx
-    result.dnorm.y = (result.dnorm.y - from.norm.y) / dx
-    result.dnorm.z = (result.dnorm.z - from.norm.z) / dx
-    return result
-  }
-
-  iterate :: proc "contextless" (base : Vary, d_dy : Interpolator, steps : int) -> Vary {
-    dist := f32(steps)
-    result := base
-    result.pos.x += dist * d_dy.dpos.x
-    result.pos.y += dist * d_dy.dpos.y
-    result.pos.z += dist * d_dy.dpos.z
-    result.norm.x += dist * d_dy.dnorm.x
-    result.norm.y += dist * d_dy.dnorm.y
-    result.norm.z += dist * d_dy.dnorm.z
-    return result
-  }
 
   // Sort verticies:
   top, right, left : Vary
@@ -525,21 +675,72 @@ draw_fragment :: proc "contextless" (x, y : int, frag : Vary, material : Materia
   color := color
   if x >= 0 && x < w4.SCREEN_SIZE &&
      y >= 0 && y < w4.SCREEN_SIZE &&
-     frag.z >= 0 && frag.z <= 1 {
-    depth := to_depth(frag.z)
+     frag.pos.z >= 0 && frag.pos.z <= 1 {
+    depth := to_depth(frag.pos.z)
     depth_idx := x + w4.SCREEN_SIZE*y
     if depth >= depth_buffer[depth_idx] {
       return
     }
 
-    if .Do_Lighting in material.options {
+    physic_sparkle :: proc "contextless" (x, y : int, dust : bool) -> bool {
+      offset := int(7*(time/20) % BLUE_NOISE_SIZE)
+      noise_idx := ((x/8) % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*(((y/8)+offset) % BLUE_NOISE_SIZE))
+      threshold := blue_noise_void_cluster[noise_idx]
+      test := u8(((x + w4.SCREEN_SIZE*y) + int(37*(time/20))) % 255)
+      if dust {
+        threshold %= 50
+        test %= 50
+      }
+      if threshold == test {
+        if dust {
+          noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
+          threshold := blue_noise_void_cluster[noise_idx]
+          return threshold < u8(((x + w4.SCREEN_SIZE*y) + int(37*(time/20))) % (1+int(254*rendering_pysic_density)))
+        } else {
+          return true
+        }
+      }
+      return false
+    }
+
+    if material == .Death {
+      offset := int(7*(time/20) % BLUE_NOISE_SIZE)
+      noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
+      threshold := blue_noise_void_cluster[noise_idx]
+      if threshold < 127 {
+        return
+      }
+    }
+
+    if material == .Physic && !physic_sparkle(x, y, true) {
+      return
+    }
+
+    if material == .Trail {
+      offset := int(7*(time/5) % BLUE_NOISE_SIZE)
+      noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
+      threshold := blue_noise_void_cluster[noise_idx]
+      test := u8(255*(1-frag.pos.z)*ease_quad_out(1-frag.norm.y))
+      if test < threshold {
+        return
+      }
+      if test < 255+threshold/2 {
+        color = .Gray
+      }
+    }
+
+    lighting: if material == .Asteroid || material == .Metal {
       light := u8(255*ease_quad_out(clamp(0.75*dot(light_dir, frag.norm) + 0.5, 0, 1)))
       threshold := u8(128)
 
-      if .Dither_Ordered in material.options {
+      if material == .Metal {
         noise_idx := (x % ORDERED_NOISE_SIZE) + (ORDERED_NOISE_SIZE*(y % ORDERED_NOISE_SIZE))
         threshold = ordered_noise[noise_idx]
-      } else if .Dither_Blue in material.options {
+      } else {
+        if current_color == .Green && physic_sparkle(x, y, false) {
+          color = .Green
+          break lighting
+        }
         offset := int(7*(time/5) % BLUE_NOISE_SIZE)
         noise_idx := (x % BLUE_NOISE_SIZE) + (BLUE_NOISE_SIZE*((y+offset) % BLUE_NOISE_SIZE))
         threshold = blue_noise_void_cluster[noise_idx]
@@ -550,12 +751,8 @@ draw_fragment :: proc "contextless" (x, y : int, frag : Vary, material : Materia
       }
     }
 
-    if .No_Color_Write not_in material.options {
-      set_pixel(x, y, color)
-    }
-    if .No_Depth_Write not_in material.options {
-      depth_buffer[depth_idx] = depth
-    }
+    set_pixel(x, y, color)
+    depth_buffer[depth_idx] = depth
   }
 }
 
@@ -602,6 +799,6 @@ model_to_screen :: proc "contextless" (model : V4) -> V3 {
     projected_point.x = -projected_point.x
     projected_point.y = -projected_point.y
   }
-  projected_point.z = ease_quad_out(remap(view_point.z, -NEAR_CLIP, -FAR_CLIP, 0.0, 1.0))
+  projected_point.z = remap(view_point.z, -NEAR_CLIP, -FAR_CLIP, 0.0, 1.0)
   return projected_point
 }
